@@ -1,8 +1,5 @@
 #include <AppendReduce/iGameAppendReduceFilter.h>
-#include <Core/iGameScene.h>
 #include <iGameFileIO.h>
-#include <iGameInteractor.h>
-#include <iGameRenderWindow.h>
 #include <iostream>
 #include <string>
 
@@ -188,7 +185,6 @@ int main(int argc, char* argv[]) {
         auto meshA = CreateTriangleMesh(0, 0, 0,  1, 0, 0,  0, 1, 0);
         auto meshB = CreateTriangleMesh(1, 0, 0,  0, 1, 0,  1, 1, 0);
 
-        // meshA: Temperature + Pressure
         auto tempA = FloatArray::New();
         tempA->SetName("Temperature");
         tempA->SetDimension(1);
@@ -205,7 +201,6 @@ int main(int argc, char* argv[]) {
         pressA->AddValue(1.5f);
         meshA->GetAttributeSet()->AddScalar(IG_POINT, pressA);
 
-        // meshB: Temperature only (no Pressure)
         auto tempB = FloatArray::New();
         tempB->SetName("Temperature");
         tempB->SetDimension(1);
@@ -305,30 +300,23 @@ int main(int argc, char* argv[]) {
             auto out = DynamicCast<SurfaceMesh>(f->GetOutput());
             TestCheck("output is SurfaceMesh", out != nullptr);
             if (out) {
-                // planeA: 16 points, planeB: 16 points
-                // Shared edge at x=3: 4 points each => 4 merged, 4 removed
-                // Total: 16 + 16 - 4 = 28
                 int nPts = (int)out->GetPoints()->GetNumberOfPoints();
                 TestCheck("vertex count = 28 (4 shared vertices merged)", nPts == 28);
                 TestCheck("face count = 18 (9+9)",
                     out->GetFaces()->GetNumberOfCells() == 18);
 
-                // Check Temperature (both meshes have it)
                 auto& tempAttr = out->GetAttributeSet()->GetScalar("Temperature");
                 TestCheck("Temperature exists (both meshes have it)",
                     !tempAttr.IsNone());
 
-                // Check Pressure (only planeA has it)
                 auto& pressAttr = out->GetAttributeSet()->GetScalar("Pressure");
                 TestCheck("Pressure does NOT exist (only planeA has it)",
                     pressAttr.IsNone());
 
-                // Check Velocity (only planeB has it)
                 auto& velAttr = out->GetAttributeSet()->GetVector("Velocity");
                 TestCheck("Velocity does NOT exist (only planeB has it)",
                     velAttr.IsNone());
 
-                // Check Stress (cell scalar, both meshes have it)
                 auto& stressAttr = out->GetAttributeSet()->GetScalar("Stress");
                 TestCheck("Stress cell attribute exists (both meshes have it)",
                     !stressAttr.IsNone() && stressAttr.attachmentType == IG_CELL);
@@ -353,6 +341,156 @@ int main(int argc, char* argv[]) {
             }
         } else {
             std::cout << "  [SKIP] VTK model files not found (expected in Models/)" << std::endl;
+        }
+    }
+
+    // ===================================================================
+    // Test 8: First-input-wins for shared point attributes
+    // ===================================================================
+    std::cout << "\n[Test 8] First-input-wins for shared point attributes" << std::endl;
+    {
+        auto meshA = CreateTriangleMesh(0, 0, 0,  1, 0, 0,  0, 1, 0);
+        auto meshB = CreateTriangleMesh(1, 0, 0,  0, 1, 0,  1, 1, 0);
+
+        auto tempA = FloatArray::New();
+        tempA->SetName("Temp");
+        tempA->SetDimension(1);
+        tempA->AddValue(100.0f);
+        tempA->AddValue(200.0f);
+        tempA->AddValue(300.0f);
+        meshA->GetAttributeSet()->AddScalar(IG_POINT, tempA);
+
+        auto tempB = FloatArray::New();
+        tempB->SetName("Temp");
+        tempB->SetDimension(1);
+        // meshB's shared points should NOT overwrite meshA's values
+        tempB->AddValue(999.0f);
+        tempB->AddValue(888.0f);
+        tempB->AddValue(777.0f);
+        meshB->GetAttributeSet()->AddScalar(IG_POINT, tempB);
+
+        auto f = AppendReduceFilter::New();
+        f->AddInput(meshA);
+        f->AddInput(meshB);
+        f->SetMergePoints(true);
+        f->SetTolerance(1e-6f);
+        f->Execute();
+
+        auto out = DynamicCast<SurfaceMesh>(f->GetOutput());
+        TestCheck("output is SurfaceMesh", out != nullptr);
+        if (out) {
+            auto& attr = out->GetAttributeSet()->GetScalar("Temp");
+            TestCheck("Temp attribute exists", !attr.IsNone());
+            if (!attr.IsNone()) {
+                // Point 0 (0,0,0) is shared between meshA[0] and meshB[0]
+                // meshA[0] = 100.0, meshB[0] = 999.0
+                // First input wins: should be 100.0
+                float val[1] = {0.0f};
+                attr.pointer->GetElement(0, val);
+                TestCheck("shared point keeps first input value (100.0)",
+                    val[0] == 100.0f);
+            }
+        }
+    }
+
+    // ===================================================================
+    // Test 9: Non-SurfaceMesh input rejection
+    // ===================================================================
+    std::cout << "\n[Test 9] Non-SurfaceMesh input rejection" << std::endl;
+    {
+        auto mesh1 = CreateTriangleMesh(0, 0, 0,  1, 0, 0,  0, 1, 0);
+
+        auto f = AppendReduceFilter::New();
+        f->AddInput(mesh1);
+        f->AddInput(nullptr);  // invalid input
+        f->SetMergePoints(true);
+
+        bool ok = f->Execute();
+        // nullptr input should be skipped, not cause failure
+        TestCheck("Execute returns true (nullptr skipped)", ok);
+
+        auto out = DynamicCast<SurfaceMesh>(f->GetOutput());
+        TestCheck("output is valid", out != nullptr);
+        if (out) {
+            TestCheck("single mesh: 3 points",
+                out->GetPoints()->GetNumberOfPoints() == 3);
+            TestCheck("single mesh: 1 face",
+                out->GetFaces()->GetNumberOfCells() == 1);
+        }
+    }
+
+    // ===================================================================
+    // Test 10: Array type preservation (IntArray)
+    // ===================================================================
+    std::cout << "\n[Test 10] Array type preservation (IntArray)" << std::endl;
+    {
+        auto meshA = CreateTriangleMesh(0, 0, 0,  1, 0, 0,  0, 1, 0);
+        auto meshB = CreateTriangleMesh(2, 0, 0,  3, 0, 0,  2, 1, 0);
+
+        auto idA = IntArray::New();
+        idA->SetName("MaterialId");
+        idA->SetDimension(1);
+        idA->AddValue(1);
+        idA->AddValue(2);
+        idA->AddValue(3);
+        meshA->GetAttributeSet()->AddScalar(IG_POINT, idA);
+
+        auto idB = IntArray::New();
+        idB->SetName("MaterialId");
+        idB->SetDimension(1);
+        idB->AddValue(4);
+        idB->AddValue(5);
+        idB->AddValue(6);
+        meshB->GetAttributeSet()->AddScalar(IG_POINT, idB);
+
+        auto f = AppendReduceFilter::New();
+        f->AddInput(meshA);
+        f->AddInput(meshB);
+        f->SetMergePoints(false);
+        f->Execute();
+
+        auto out = DynamicCast<SurfaceMesh>(f->GetOutput());
+        TestCheck("output is SurfaceMesh", out != nullptr);
+        if (out) {
+            auto& attr = out->GetAttributeSet()->GetScalar("MaterialId");
+            TestCheck("MaterialId exists", !attr.IsNone());
+            if (!attr.IsNone()) {
+                IGenum actualType = attr.pointer->GetArrayType();
+                std::cout << "  [DEBUG] MaterialId array type = " << actualType
+                          << " (expected IG_IntArray=" << IG_IntArray << ")" << std::endl;
+                TestCheck("MaterialId preserved as IntArray (not FloatArray)",
+                    actualType == IG_IntArray);
+                TestCheck("MaterialId element count = 6",
+                    attr.pointer->GetNumberOfElements() == 6);
+            }
+        }
+    }
+
+    // ===================================================================
+    // Test 11: Hash bucket boundary merge (cross-bucket points)
+    // ===================================================================
+    std::cout << "\n[Test 11] Hash bucket boundary merge (cross-bucket)" << std::endl;
+    {
+        // Use tolerance=1.0, points at x=0.99 and x=1.01 should merge
+        // but they fall into different buckets with old single-bucket check
+        auto meshA = CreateTriangleMesh(0.99, 0, 0,  2, 0, 0,  0.99, 1, 0);
+        auto meshB = CreateTriangleMesh(1.01, 0, 0,  2, 1, 0,  1.01, 1, 0);
+
+        auto f = AppendReduceFilter::New();
+        f->AddInput(meshA);
+        f->AddInput(meshB);
+        f->SetMergePoints(true);
+        f->SetTolerance(1.0f);
+        f->Execute();
+
+        auto out = DynamicCast<SurfaceMesh>(f->GetOutput());
+        TestCheck("output is SurfaceMesh", out != nullptr);
+        if (out) {
+            int nPts = (int)out->GetPoints()->GetNumberOfPoints();
+            std::cout << "  [DEBUG] cross-bucket vertex count = " << nPts << " (expected 4)" << std::endl;
+            TestCheck("cross-bucket points merged (4 vertices)", nPts == 4);
+            TestCheck("face count = 2",
+                out->GetFaces()->GetNumberOfCells() == 2);
         }
     }
 
