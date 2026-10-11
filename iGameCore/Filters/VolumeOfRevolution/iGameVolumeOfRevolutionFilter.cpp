@@ -21,6 +21,55 @@ static void BuildAdjacency(const std::vector<RevolutionEdge>& edges, std::map<IG
         adj[e.v1].insert(e.v0);
     }
 }
+
+// 本过滤器只接受「2D 轮廓」：1D 曲线或 2D 面片的边界。
+// 只有线段/折线才是轮廓本身，面片类型本身不是轮廓，因此下面这些类型是允许出现的。
+static bool IsContourCurveCellType(IGenum cellType) {
+    return cellType == IG_LINE || cellType == IG_POLY_LINE || cellType == IG_QUADRATIC_EDGE ||
+           cellType == IG_LAGRANGE_CURVE;
+}
+
+static bool IsSurfaceFaceCellType(IGenum cellType) {
+    return cellType == IG_TRIANGLE || cellType == IG_QUAD || cellType == IG_POLYGON ||
+           cellType == IG_FACE || cellType == IG_QUADRATIC_TRIANGLE || cellType == IG_QUADRATIC_QUAD ||
+           cellType == IG_QUADRATIC_POLYGON || cellType == IG_LAGRANGE_TRIANGLE ||
+           cellType == IG_LAGRANGE_QUADRILATERAL;
+}
+
+// 体单元（三维实体）不是轮廓，输入只含这些单元时必须拒绝，而不是退化成"把点顺序连起来"。
+static bool IsVolumeCellType(IGenum cellType) {
+    return cellType == IG_TETRA || cellType == IG_HEXAHEDRON || cellType == IG_PYRAMID ||
+           cellType == IG_PRISM || cellType == IG_VOLUME || cellType == IG_POLYHEDRON ||
+           cellType == IG_QUADRATIC_TETRA || cellType == IG_QUADRATIC_HEXAHEDRON ||
+           cellType == IG_QUADRATIC_PRISM || cellType == IG_QUADRATIC_PYRAMID ||
+           cellType == IG_BIQUADRATIC_QUADRATIC_HEXAHEDRON ||
+           cellType == IG_TRIQUADRATIC_HEXAHEDRON || cellType == IG_LAGRANGE_TETRAHEDRON ||
+           cellType == IG_LAGRANGE_HEXAHEDRON || cellType == IG_LAGRANGE_PRISM ||
+           cellType == IG_LAGRANGE_PYRAMID;
+}
+
+// 只取轮廓实际用到的点：体单元网格里多余的顶点不应影响有限性检查。
+static bool ValidateReferencedPoints(const std::vector<Vector3d>& contourPts,
+                                     const std::vector<RevolutionEdge>& edges, IGsize& badIndex,
+                                     std::string& badValue) {
+    std::vector<bool> used(contourPts.size(), false);
+    for (const auto& edge: edges) {
+        used[edge.v0] = true;
+        used[edge.v1] = true;
+    }
+    for (IGsize i = 0; i < contourPts.size(); ++i) {
+        if (!used[i]) continue;
+        const Vector3d& p = contourPts[i];
+        for (int c = 0; c < 3; ++c) {
+            if (!std::isfinite(p[c])) {
+                badIndex = i;
+                badValue = std::to_string(p[c]);
+                return false;
+            }
+        }
+    }
+    return true;
+}
 // 根据源数组类型创建一个同类型的空数组，指定元组数量
 static ArrayObject::Pointer CreateEmptyArrayOfSameType(ArrayObject::Pointer src, IGsize numTuples) {
     if (!src) return nullptr;
@@ -92,180 +141,320 @@ static ArrayObject::Pointer CreateEmptyArrayOfSameType(ArrayObject::Pointer src,
     return nullptr;
 }
 // ---------- 主执行函数 ----------
-bool VolumeOfRevolutionFilter::Execute() {
-    DataObject::Pointer input = GetInput(0);
-    if (!input) return false;
-
-    std::vector<Vector3d> contourPts;
-    std::vector<RevolutionEdge> edges;
-
-    IGenum type = input->GetDataObjectType();
+// 读取输入并提取轮廓。失败时返回 false 并写出可读原因（buildMessage）。
+// 这里集中承担「拒绝不符合输入条件的模型」的职责。
+static bool BuildContour(const DataObject::Pointer& input, std::vector<Vector3d>& contourPts,
+                         std::vector<RevolutionEdge>& edges, std::string& buildMessage) {
+    const IGenum type = input->GetDataObjectType();
 
     if (type == IG_UNSTRUCTURED_MESH) {
         auto inMesh = DynamicCast<UnstructuredMesh>(input);
         if (!inMesh) {
-            igError("Failed to cast to UnstructuredMesh.");
+            buildMessage = "Failed to cast the input to UnstructuredMesh.";
             return false;
         }
         auto inPoints = inMesh->GetPoints();
         if (!inPoints || inPoints->GetNumberOfPoints() < 2) {
-            igError("UnstructuredMesh has insufficient points.");
+            buildMessage = "UnstructuredMesh input has fewer than 2 points; a revolution contour needs at least 2.";
             return false;
         }
-        IGsize numPts = inPoints->GetNumberOfPoints();
-        contourPts.resize(numPts);
-        for (IGsize i = 0; i < numPts; ++i) { inPoints->GetPoint(i, contourPts[i]); }
         auto cells = inMesh->GetCells();
         auto types = inMesh->GetCellTypes();
-        if (cells && types) {
-            IGsize numCells = cells->GetNumberOfCells();
-            for (IGsize i = 0; i < numCells; ++i) {
-                if (types->GetValue(i) == IG_LINE) {
-                    igIndex ids[2];
-                    if (cells->GetCellIds(i, ids) == 2) {
-                        edges.push_back({static_cast<IGsize>(ids[0]), static_cast<IGsize>(ids[1]),i});
-                    }
+        if (!cells || !types || cells->GetNumberOfCells() == 0) {
+            buildMessage = "UnstructuredMesh input has no cells; a point cloud is not a revolution contour.";
+            return false;
+        }
+
+        const IGsize numPts = inPoints->GetNumberOfPoints();
+        contourPts.resize(numPts);
+        for (IGsize i = 0; i < numPts; ++i) { inPoints->GetPoint(i, contourPts[i]); }
+
+        const IGsize numCells = cells->GetNumberOfCells();
+        IGsize volumeCells = 0;
+        IGsize unsupportedCells = 0;
+        IGenum firstUnsupported = IG_EMPTY_CELL;
+        IGenum firstDegenerate = IG_EMPTY_CELL; // 曲线单元但点数不足 2
+        std::vector<bool> unsupportedTypes(IG_LAGRANGE_PYRAMID + 1, false);
+        for (IGsize i = 0; i < numCells; ++i) {
+            const IGenum cellType = static_cast<IGenum>(types->GetValue(i));
+            if (IsContourCurveCellType(cellType)) {
+                // IG_LINE 为 2 点；IG_POLY_LINE 与高阶曲线由若干段组成，逐段展开。
+                const igIndex* pointIds = nullptr;
+                const int count = cells->GetCellIds(i, pointIds);
+                if (count < 2 || pointIds == nullptr) {
+                    if (firstDegenerate == IG_EMPTY_CELL) firstDegenerate = cellType;
+                    continue;
                 }
+                for (int k = 0; k + 1 < count; ++k) {
+                    const igIndex id0 = pointIds[k];
+                    const igIndex id1 = pointIds[k + 1];
+                    if (id0 < 0 || id1 < 0 || static_cast<IGsize>(id0) >= numPts ||
+                        static_cast<IGsize>(id1) >= numPts) {
+                        buildMessage = "UnstructuredMesh curve cell " + std::to_string(i) +
+                                       " references a point outside the point array.";
+                        return false;
+                    }
+                    edges.push_back({static_cast<IGsize>(id0), static_cast<IGsize>(id1), i});
+                }
+            } else if (IsSurfaceFaceCellType(cellType)) {
+                // 面片只用来说明单元属性的来源，轮廓仍由线段/折线单元给出。
+                continue;
+            } else {
+                if (IsVolumeCellType(cellType)) ++volumeCells;
+                ++unsupportedCells;
+                if (cellType >= 0 && static_cast<size_t>(cellType) < unsupportedTypes.size()) {
+                    unsupportedTypes[static_cast<size_t>(cellType)] = true;
+                }
+                if (firstUnsupported == IG_EMPTY_CELL) firstUnsupported = cellType;
             }
         }
-        if (edges.empty() && numPts > 1) {
-            for (IGsize i = 0; i < numPts - 1; ++i) { edges.push_back({i, i + 1}); }
+
+        if (edges.empty()) {
+            const IGsize kindCount =
+                    static_cast<IGsize>(std::count(unsupportedTypes.begin(), unsupportedTypes.end(), true));
+            if (unsupportedCells > 0 && volumeCells == unsupportedCells) {
+                buildMessage = "UnstructuredMesh input only contains volume cells (" +
+                               std::to_string(volumeCells) +
+                               " cells, e.g. Tetra/Hexahedron); a 3D solid cannot be revolved, provide a 2D "
+                               "contour curve instead.";
+            } else if (firstDegenerate != IG_EMPTY_CELL) {
+                buildMessage = "UnstructuredMesh curve cells exist but none has at least 2 point ids; invalid "
+                               "contour connectivity.";
+            } else {
+                buildMessage = "UnstructuredMesh input has no line cells to use as a contour (" +
+                               std::to_string(numCells) + " cells of " + std::to_string(kindCount) +
+                               " cell type(s), e.g. type " + std::to_string(firstUnsupported) + " (" +
+                               GetCellTypeAsString(firstUnsupported) + ")); a 2D contour of Line/PolyLine cells "
+                               "is required.";
+            }
+            return false;
         }
     } else if (type == IG_SURFACE_MESH) {
         auto surf = DynamicCast<SurfaceMesh>(input);
-        surf->RequestEditStatus();
         if (!surf) {
-            igError("Failed to cast to SurfaceMesh.");
+            buildMessage = "Failed to cast the input to SurfaceMesh.";
             return false;
         }
         auto pts = surf->GetPoints();
         if (!pts || pts->GetNumberOfPoints() < 3) {
-            igError("SurfaceMesh has insufficient points.");
+            buildMessage = "SurfaceMesh input has fewer than 3 points; its boundary cannot be a 2D contour.";
             return false;
         }
-        IGsize numPts = pts->GetNumberOfPoints();
+        if (surf->GetNumberOfFaces() == 0) {
+            buildMessage = "SurfaceMesh input has no faces; its boundary cannot be a 2D contour.";
+            return false;
+        }
+        // 仅在确实要读取拓扑信息时才申请编辑状态（原先在类型转换检查之前调用，空指针会崩溃）。
+        surf->RequestEditStatus();
+
+        const IGsize numPts = pts->GetNumberOfPoints();
         contourPts.resize(numPts);
         for (IGsize i = 0; i < numPts; ++i) { pts->GetPoint(i, contourPts[i]); }
-        IGsize numEdges = surf->GetNumberOfEdges();
+
+        const IGsize numEdges = surf->GetNumberOfEdges();
         for (IGsize eid = 0; eid < numEdges; ++eid) {
-            if (surf->IsBoundaryEdge(eid)) {
-                igIndex ids[2];
-                if (surf->GetEdgePointIds(eid, ids) == 2) {
-                    igIndex faceIds[1];
-                    int numFaces = surf->GetEdgeToNeighborFaces(eid, faceIds);
-                    IGsize cellId = (numFaces == 1) ? static_cast<IGsize>(faceIds[0]) : static_cast<IGsize>(-1);
-                    edges.push_back({static_cast<IGsize>(ids[0]), static_cast<IGsize>(ids[1]),cellId});
-                }
-            }
+            if (!surf->IsBoundaryEdge(eid)) continue;
+            igIndex ids[2];
+            if (surf->GetEdgePointIds(eid, ids) != 2) continue;
+            igIndex faceIds[1];
+            const int numFaces = surf->GetEdgeToNeighborFaces(eid, faceIds);
+            const IGsize cellId = (numFaces == 1) ? static_cast<IGsize>(faceIds[0]) : static_cast<IGsize>(-1);
+            edges.push_back({static_cast<IGsize>(ids[0]), static_cast<IGsize>(ids[1]), cellId});
         }
         if (edges.empty()) {
-            igError("SurfaceMesh has no boundary edges (not a valid 2D contour).");
+            buildMessage = "SurfaceMesh input has no boundary edges: a closed surface (e.g. a sphere) is not a "
+                           "2D revolution contour.";
             return false;
         }
     } else if (type == IG_STRUCTURED_MESH) {
         auto sMesh = DynamicCast<StructuredMesh>(input);
         if (!sMesh) {
-            igError("Failed to cast to StructuredMesh.");
+            buildMessage = "Failed to cast the input to StructuredMesh.";
             return false;
         }
         auto pts = sMesh->GetPoints();
         if (!pts || pts->GetNumberOfPoints() < 2) {
-            igError("StructuredMesh has insufficient points.");
+            buildMessage = "StructuredMesh input has fewer than 2 points; a revolution contour needs at least 2.";
             return false;
         }
-        igIndex* dim = sMesh->GetDimensionSize();
-        IGsize ni = dim[0], nj = dim[1], nk = dim[2];
-        IGsize expectedPts = ni * nj * nk;
-        IGsize actualPts = pts->GetNumberOfPoints();
+        const igIndex* dim = sMesh->GetDimensionSize();
+        const IGsize ni = dim[0], nj = dim[1], nk = dim[2];
+        if (ni < 1 || nj < 1 || nk < 1) {
+            buildMessage = "StructuredMesh input has a degenerate dimension (" + std::to_string(ni) + "x" +
+                           std::to_string(nj) + "x" + std::to_string(nk) + ").";
+            return false;
+        }
+        if (nk > 1) {
+            buildMessage = "StructuredMesh input is a 3D volume (" + std::to_string(ni) + "x" +
+                           std::to_string(nj) + "x" + std::to_string(nk) +
+                           "); a 1D curve or 2D surface (nk==1) is required.";
+            return false;
+        }
+        const IGsize expectedPts = ni * nj * nk;
+        const IGsize actualPts = pts->GetNumberOfPoints();
         if (actualPts != expectedPts) {
-            igError("StructuredMesh point count does not match dimensions.");
+            buildMessage = "StructuredMesh point count (" + std::to_string(actualPts) +
+                           ") does not match its dimensions (" + std::to_string(ni) + "x" + std::to_string(nj) +
+                           "x" + std::to_string(nk) + ").";
             return false;
         }
         contourPts.resize(actualPts);
         for (IGsize idx = 0; idx < actualPts; ++idx) { pts->GetPoint(idx, contourPts[idx]); }
 
         auto idxOf = [&](IGsize i, IGsize j, IGsize k) -> IGsize { return i + j * ni + k * ni * nj; };
-        std::set<std::pair<IGsize, IGsize>> edgeSet;
-        auto addEdge = [&](IGsize a, IGsize b) {
-            if (a > b) std::swap(a, b);
-            edgeSet.insert({a, b});
-        };
-        if (nj == 1 && nk == 1) {
-            for (IGsize i = 0; i < ni - 1; ++i) { addEdge(idxOf(i, 0, 0), idxOf(i + 1, 0, 0)); }
-        } else if (nk == 1) {
-            for (IGsize i = 0; i < ni - 1; ++i) addEdge(idxOf(i, 0, 0), idxOf(i + 1, 0, 0));
-            for (IGsize i = 0; i < ni - 1; ++i) addEdge(idxOf(i, nj - 1, 0), idxOf(i + 1, nj - 1, 0));
-            for (IGsize j = 0; j < nj - 1; ++j) addEdge(idxOf(0, j, 0), idxOf(0, j + 1, 0));
-            for (IGsize j = 0; j < nj - 1; ++j) addEdge(idxOf(ni - 1, j, 0), idxOf(ni - 1, j + 1, 0));
-        } else {
-            igError("StructuredMesh must be 1D curve or 2D surface (nk==1).");
-            return false;
-        }
-        if (nj == 1 && nk == 1) {
-            // 1D 曲线，无单元概念，cellId 设为 -1
-            for (IGsize i = 0; i < ni - 1; ++i) {
-                edges.push_back({idxOf(i,0,0), idxOf(i+1,0,0), static_cast<IGsize>(-1)});
+        if (nj == 1) {
+            // 1D 曲线，无单元概念，cellId 设为 -1（不复制单元属性）
+            for (IGsize i = 0; i + 1 < ni; ++i) {
+                edges.push_back({idxOf(i, 0, 0), idxOf(i + 1, 0, 0), static_cast<IGsize>(-1)});
             }
-        } else if (nk == 1) {
+        } else {
             // 2D 曲面，获取所有面片
             auto faces = sMesh->GetFaces();
             if (!faces || faces->GetNumberOfCells() == 0) {
-                igError("StructuredMesh has no faces.");
+                buildMessage = "StructuredMesh input has no faces; a 2D surface is required.";
                 return false;
             }
             // 构建边 -> 面片ID列表的映射
             std::map<std::pair<IGsize, IGsize>, std::vector<IGsize>> edgeFaceMap;
-            IGsize numFaces = faces->GetNumberOfCells();
+            const IGsize numFaces = faces->GetNumberOfCells();
             for (IGsize f = 0; f < numFaces; ++f) {
-                igIndex pts[4];
-                int npts = faces->GetCellIds(f, pts);  // 应为四边形
-                if (npts != 4) continue;
-                for (int e = 0; e < 4; ++e) {
-                    IGsize a = pts[e], b = pts[(e+1)%4];
+                igIndex facePts[4];
+                const int npts = faces->GetCellIds(f, facePts); // 应为四边形
+                if (npts < 3) continue;
+                for (int e = 0; e < npts; ++e) {
+                    IGsize a = static_cast<IGsize>(facePts[e]);
+                    IGsize b = static_cast<IGsize>(facePts[(e + 1) % npts]);
                     if (a > b) std::swap(a, b);
                     edgeFaceMap[{a, b}].push_back(f);
                 }
             }
             // 筛选边界边
-            for (auto& kv : edgeFaceMap) {
+            for (auto& kv: edgeFaceMap) {
                 if (kv.second.size() == 1) {
-                    auto& edge = kv.first;
-                    IGsize cellId = kv.second[0];
-                    edges.push_back({edge.first, edge.second, cellId});
+                    edges.push_back({kv.first.first, kv.first.second, kv.second[0]});
                 }
             }
             if (edges.empty()) {
-                igError("StructuredMesh boundary extraction failed.");
+                buildMessage = "StructuredMesh boundary extraction failed: the structured surface has no "
+                               "boundary edges (closed surface).";
                 return false;
             }
         }
-        if (edges.empty()) {
-            igError("StructuredMesh boundary extraction failed.");
-            return false;
-        }
     } else {
-        igError("iGameVolumeOfRevolution does not support this data type.");
+        buildMessage = "iGameVolumeOfRevolution does not support this data type (" +
+                       std::to_string(static_cast<int>(type)) + " (" + GetCellTypeAsString(type) +
+                       ")); supported inputs are UnstructuredMesh (Line/PolyLine cells), SurfaceMesh and "
+                       "StructuredMesh.";
         return false;
     }
 
     if (contourPts.size() < 2 || edges.empty()) {
-        igError("No valid contour points or edges found.");
+        buildMessage = "No valid contour points or edges found in the input.";
+        return false;
+    }
+    for (IGsize i = 0; i < edges.size(); ++i) {
+        if (edges[i].v0 == edges[i].v1) {
+            buildMessage = "Contour edge " + std::to_string(i) + " is degenerate (both ends are point " +
+                           std::to_string(edges[i].v0) + ").";
+            return false;
+        }
+    }
+    return true;
+}
+
+// ---------- 主执行函数 ----------
+bool VolumeOfRevolutionFilter::Execute() {
+    m_Message.clear();
+    // 与 iGameLinearExtrusionFilter 一致：执行失败时不保留上一次的结果
+    this->SetOutput(0, nullptr);
+
+    DataObject::Pointer input = GetInput(0);
+    if (!input) {
+        m_Message = "VolumeOfRevolutionFilter has no input DataObject.";
+        igError("{}", m_Message);
         return false;
     }
 
-    // -------- 旋转轴归一化 --------
+    std::vector<Vector3d> contourPts;
+    std::vector<RevolutionEdge> edges;
+
+    std::string buildMessage;
+    if (!BuildContour(input, contourPts, edges, buildMessage)) {
+        m_Message = buildMessage;
+        igError("{}", m_Message);
+        return false;
+    }
+
+    // -------- 旋转轴与角度合法性（参数不符合条件同样要拒绝，而不是产出错误网格） --------
     Vector3d axisDir = m_AxisDirection;
     double len = axisDir.norm();
-    if (len < 1e-12) {
-        igError("Axis direction is zero.");
+    if (!std::isfinite(len) || len < 1e-12) {
+        m_Message = "Axis direction must be a non-zero, finite vector.";
+        igError("{}", m_Message);
         return false;
     }
     axisDir /= len;
     Vector3d axisPt = m_AxisPoint;
+    for (int c = 0; c < 3; ++c) {
+        if (!std::isfinite(axisPt[c])) {
+            m_Message = "Axis point must have finite coordinates.";
+            igError("{}", m_Message);
+            return false;
+        }
+    }
+    const double angle = m_Angle;
+    if (!std::isfinite(angle)) {
+        m_Message = "Revolution angle must be finite.";
+        igError("{}", m_Message);
+        return false;
+    }
+    if (std::fabs(angle) < 1e-12) {
+        m_Message = "Revolution angle is zero; the result would be a degenerate (zero-area) surface.";
+        igError("{}", m_Message);
+        return false;
+    }
+    if (std::fabs(angle) > 2.0 * 3.141592653589793 + 1e-9) {
+        m_Message = "Revolution angle must not exceed one full turn (360 degrees).";
+        igError("{}", m_Message);
+        return false;
+    }
+    if (m_Resolution < 3) {
+        m_Message = "Resolution must be at least 3 segments.";
+        igError("{}", m_Message);
+        return false;
+    }
+
+    // -------- 轮廓几何合法性 --------
+    IGsize numPts = contourPts.size();
+    // 只检查轮廓实际用到的点（体单元网格可能带有未被轮廓引用的多余顶点）。
+    IGsize badIndex = 0;
+    std::string badValue;
+    if (!ValidateReferencedPoints(contourPts, edges, badIndex, badValue)) {
+        m_Message = "Contour point " + std::to_string(badIndex) + " is not finite (" + badValue +
+                    "); the contour is invalid.";
+        igError("{}", m_Message);
+        return false;
+    }
+
+    double minWithAxis1 = axisPt[0], maxWithAxis1 = axisPt[0];
+    double minWithAxis2 = axisPt[1], maxWithAxis2 = axisPt[1];
+    double minAlongAxis = axisPt[2], maxAlongAxis = axisPt[2];
+    for (IGsize i = 0; i < numPts; ++i) {
+        minWithAxis1 = std::min(minWithAxis1, contourPts[i][0]);
+        maxWithAxis1 = std::max(maxWithAxis1, contourPts[i][0]);
+        minWithAxis2 = std::min(minWithAxis2, contourPts[i][1]);
+        maxWithAxis2 = std::max(maxWithAxis2, contourPts[i][1]);
+        minAlongAxis = std::min(minAlongAxis, contourPts[i][2]);
+        maxAlongAxis = std::max(maxAlongAxis, contourPts[i][2]);
+    }
+    const double withAxisExtent = std::max(maxWithAxis1 - minWithAxis1, maxWithAxis2 - minWithAxis2);
+    const double alongAxisExtent = maxAlongAxis - minAlongAxis;
+    const double tolerance =
+            1e-9 * std::max(1.0, std::max(static_cast<double>(withAxisExtent), alongAxisExtent));
 
     // -------- 预计算轮廓点投影 --------
-    IGsize numPts = contourPts.size();
     std::vector<PointProjection> proj(numPts);
+    double maxRadius = 0.0;
     for (IGsize i = 0; i < numPts; ++i) {
         Vector3d v = contourPts[i] - axisPt;
         double h = v.dot(axisDir);
@@ -274,6 +463,49 @@ bool VolumeOfRevolutionFilter::Execute() {
         proj[i].r = v_perp.norm();
         proj[i].h = h;
         proj[i].v_perp = v_perp;
+        maxRadius = std::max(maxRadius, proj[i].r);
+    }
+
+    // 所有轮廓点都落在旋转轴上：旋转退化，只会得到零面积三角形。
+    if (maxRadius <= tolerance) {
+        m_Message = "Every contour point lies on the revolution axis; the swept surface would be degenerate.";
+        igError("{}", m_Message);
+        return false;
+    }
+
+    // 轮廓退化成一条直线段（严格共线），并且旋转轴与这条直线平行：
+    // 旋转结果的所有三角形都退化为零面积，必须拒绝。
+    // 注意：这里用三个点构成的最小面积来判断严格共线；只"恰好前两点共线"不算。
+    {
+        double minCross = 0.0;
+        bool hasCross = false;
+        for (IGsize i = 0; i + 2 < numPts; ++i) {
+            for (IGsize j = i + 1; j + 1 < numPts; ++j) {
+                const Vector3d edge1 = contourPts[j] - contourPts[i];
+                for (IGsize k = j + 1; k < numPts; ++k) {
+                    const double crossNorm = edge1.cross(contourPts[k] - contourPts[i]).norm();
+                    if (!hasCross || crossNorm < minCross) {
+                        minCross = crossNorm;
+                        hasCross = true;
+                    }
+                }
+            }
+        }
+        if (hasCross && minCross <= tolerance) {
+            // 严格共线：轮廓方向就是首尾两点连线方向
+            Vector3d lineDir = contourPts[numPts - 1] - contourPts[0];
+            const double lineLength = lineDir.norm();
+            if (lineLength > tolerance) {
+                lineDir /= lineLength;
+                if (std::fabs(lineDir.dot(axisDir)) > 1.0 - 1e-9) {
+                    m_Message = "The contour is a straight segment (all points are collinear) and the revolution "
+                                "axis is parallel to it; every generated triangle would have zero area. Provide a "
+                                "non-collinear 2D contour or use an axis that is not parallel to the segment.";
+                    igError("{}", m_Message);
+                    return false;
+                }
+            }
+        }
     }
 
     // -------- 角度参数 --------
@@ -359,113 +591,126 @@ bool VolumeOfRevolutionFilter::Execute() {
     auto outputMesh = UnstructuredMesh::New();
     outputMesh->SetPoints(newPoints);
     outputMesh->SetCells(newCells, newTypes);
+
+    // -------- 复制点属性 --------
     auto inputAttrs = input->GetAttributeSet();
-if (inputAttrs) {
-    auto pointAttrs = inputAttrs->GetAllPointAttributes();
-    if (pointAttrs && pointAttrs->GetNumberOfElements() > 0) {
-        IGsize numOutPts = newPoints->GetNumberOfPoints();  // = numPts * m_Resolution
-        auto outputAttrs = outputMesh->GetAttributeSet();
-        if (!outputAttrs) {
-            outputAttrs = AttributeSet::New();
-            outputMesh->SetAttributeSet(outputAttrs);
-        }
+    if (inputAttrs) {
+        auto pointAttrs = inputAttrs->GetAllPointAttributes();
+        if (pointAttrs && pointAttrs->GetNumberOfElements() > 0) {
+            const IGsize numOutPts = newPoints->GetNumberOfPoints();
+            auto outputAttrs = outputMesh->GetAttributeSet();
+            if (!outputAttrs) {
+                outputAttrs = AttributeSet::New();
+                outputMesh->SetAttributeSet(outputAttrs);
+            }
 
-        for (int a = 0; a < pointAttrs->GetNumberOfElements(); ++a) {
-            auto& attr = pointAttrs->GetElement(a);
-            if (attr.IsDeleted() || !attr.pointer) continue;
+            for (int a = 0; a < pointAttrs->GetNumberOfElements(); ++a) {
+                auto& attr = pointAttrs->GetElement(a);
+                if (attr.IsDeleted() || !attr.pointer) continue;
 
-            auto inArray = attr.pointer;
-            int dim = inArray->GetDimension();
-            auto outArray = CreateEmptyArrayOfSameType(inArray, numOutPts);
-            if (!outArray) continue;
+                auto inArray = attr.pointer;
+                int dim = inArray->GetDimension();
+                auto outArray = CreateEmptyArrayOfSameType(inArray, numOutPts);
+                if (!outArray) continue;
 
-            outArray->SetName(inArray->GetName());
+                outArray->SetName(inArray->GetName());
 
-            // 填充数据：每个原始点 i 复制到所有层 j (j=0..m_Resolution-1)
-            for (IGsize i = 0; i < numPts; ++i) {
-                for (int j = 0; j < m_Resolution; ++j) {
-                    IGsize outIdx = pointIndices[i][j];
-                    for (int d = 0; d < dim; ++d) {
-                        double val = inArray->GetValue(i * dim + d);
-                        outArray->SetValue(outIdx * dim + d, val);
+                // 填充数据：每个原始点 i 复制到所有层 j (j=0..m_Resolution-1)
+                for (IGsize i = 0; i < numPts; ++i) {
+                    for (int j = 0; j < m_Resolution; ++j) {
+                        IGsize outIdx = pointIndices[i][j];
+                        for (int d = 0; d < dim; ++d) {
+                            double val = inArray->GetValue(i * dim + d);
+                            outArray->SetValue(outIdx * dim + d, val);
+                        }
                     }
                 }
-            }
 
-            // 按类型添加，保留数据范围
-            DoubleArray::Pointer range = attr.GetDataRange();
-            if (attr.type == IG_SCALAR) {
-                if (range) outputAttrs->AddScalar(IG_POINT, outArray, range);
-                else outputAttrs->AddScalar(IG_POINT, outArray);
-            } else if (attr.type == IG_VECTOR) {
-                if (range) outputAttrs->AddVector(IG_POINT, outArray, range);
-                else outputAttrs->AddVector(IG_POINT, outArray);
-            } else {
-                if (range) outputAttrs->AddAttribute(attr.type, IG_POINT, outArray, range);
-                else outputAttrs->AddAttribute(attr.type, IG_POINT, outArray);
-            }
-        }
-    }
-}
-// -------- 复制单元属性 --------
-bool hasValidCellIds = true;
-for (auto& e : edges) {
-    if (e.cellId == static_cast<IGsize>(-1)) {
-        hasValidCellIds = false;
-        break;
-    }
-}
-
-if (hasValidCellIds && !triCellIds.empty()) {
-    auto cellAttrs = inputAttrs->GetAllCellAttributes();
-    if (cellAttrs && cellAttrs->GetNumberOfElements() > 0) {
-        IGsize numOutCells = triCellIds.size();
-        auto outputAttrs = outputMesh->GetAttributeSet();
-        if (!outputAttrs) {
-            outputAttrs = AttributeSet::New();
-            outputMesh->SetAttributeSet(outputAttrs);
-        }
-
-        for (int a = 0; a < cellAttrs->GetNumberOfElements(); ++a) {
-            auto& attr = cellAttrs->GetElement(a);
-            if (attr.IsDeleted() || !attr.pointer) continue;
-
-            auto inArray = attr.pointer;
-            int dim = inArray->GetDimension();
-            auto outArray = CreateEmptyArrayOfSameType(inArray, numOutCells);
-            if (!outArray) continue;
-
-            outArray->SetName(inArray->GetName());
-
-            // 按 triCellIds 顺序从输入单元属性中取值
-            for (IGsize t = 0; t < numOutCells; ++t) {
-                IGsize cellId = triCellIds[t];
-                if (cellId < inArray->GetNumberOfValues() / dim) {
-                    for (int d = 0; d < dim; ++d) {
-                        double val = inArray->GetValue(cellId * dim + d);
-                        outArray->SetValue(t * dim + d, val);
-                    }
+                // 按类型添加，保留数据范围
+                DoubleArray::Pointer range = attr.GetDataRange();
+                if (attr.type == IG_SCALAR) {
+                    if (range) outputAttrs->AddScalar(IG_POINT, outArray, range);
+                    else outputAttrs->AddScalar(IG_POINT, outArray);
+                } else if (attr.type == IG_VECTOR) {
+                    if (range) outputAttrs->AddVector(IG_POINT, outArray, range);
+                    else outputAttrs->AddVector(IG_POINT, outArray);
                 } else {
-                    // 若 cellId 无效，置 0
-                    for (int d = 0; d < dim; ++d) outArray->SetValue(t * dim + d, 0.0);
+                    if (range) outputAttrs->AddAttribute(attr.type, IG_POINT, outArray, range);
+                    else outputAttrs->AddAttribute(attr.type, IG_POINT, outArray);
                 }
-            }
-
-            // 添加到输出
-            DoubleArray::Pointer range = attr.GetDataRange();
-            if (attr.type == IG_SCALAR) {
-                if (range) outputAttrs->AddScalar(IG_CELL, outArray, range);
-                else outputAttrs->AddScalar(IG_CELL, outArray);
-            } else if (attr.type == IG_VECTOR) {
-                if (range) outputAttrs->AddVector(IG_CELL, outArray, range);
-                else outputAttrs->AddVector(IG_CELL, outArray);
-            } else {
-                if (range) outputAttrs->AddAttribute(attr.type, IG_CELL, outArray, range);
-                else outputAttrs->AddAttribute(attr.type, IG_CELL, outArray);
             }
         }
     }
-}
+
+    // -------- 复制单元属性 --------
+    // 只有轮廓边全部对应到真实的输入单元时才复制：cellId 为 -1（顺序连接的曲线、
+    // StructuredMesh 的 1D 曲线）没有可继承的单元属性。
+    bool hasValidCellIds = true;
+    for (auto& e: edges) {
+        if (e.cellId == static_cast<IGsize>(-1)) {
+            hasValidCellIds = false;
+            break;
+        }
+    }
+
+    if (inputAttrs && hasValidCellIds && !triCellIds.empty()) {
+        auto cellAttrs = inputAttrs->GetAllCellAttributes();
+        if (cellAttrs && cellAttrs->GetNumberOfElements() > 0) {
+            IGsize numOutCells = triCellIds.size();
+            auto outputAttrs = outputMesh->GetAttributeSet();
+            if (!outputAttrs) {
+                outputAttrs = AttributeSet::New();
+                outputMesh->SetAttributeSet(outputAttrs);
+            }
+
+            for (int a = 0; a < cellAttrs->GetNumberOfElements(); ++a) {
+                auto& attr = cellAttrs->GetElement(a);
+                if (attr.IsDeleted() || !attr.pointer) continue;
+
+                auto inArray = attr.pointer;
+                int dim = inArray->GetDimension();
+                auto outArray = CreateEmptyArrayOfSameType(inArray, numOutCells);
+                if (!outArray) continue;
+
+                outArray->SetName(inArray->GetName());
+
+                // 按 triCellIds 顺序从输入单元属性中取值
+                for (IGsize t = 0; t < numOutCells; ++t) {
+                    IGsize cellId = triCellIds[t];
+                    if (cellId < inArray->GetNumberOfValues() / dim) {
+                        for (int d = 0; d < dim; ++d) {
+                            double val = inArray->GetValue(cellId * dim + d);
+                            outArray->SetValue(t * dim + d, val);
+                        }
+                    } else {
+                        // 若 cellId 无效，置 0
+                        for (int d = 0; d < dim; ++d) outArray->SetValue(t * dim + d, 0.0);
+                    }
+                }
+
+                // 添加到输出
+                DoubleArray::Pointer range = attr.GetDataRange();
+                if (attr.type == IG_SCALAR) {
+                    if (range) outputAttrs->AddScalar(IG_CELL, outArray, range);
+                    else outputAttrs->AddScalar(IG_CELL, outArray);
+                } else if (attr.type == IG_VECTOR) {
+                    if (range) outputAttrs->AddVector(IG_CELL, outArray, range);
+                    else outputAttrs->AddVector(IG_CELL, outArray);
+                } else {
+                    if (range) outputAttrs->AddAttribute(attr.type, IG_CELL, outArray, range);
+                    else outputAttrs->AddAttribute(attr.type, IG_CELL, outArray);
+                }
+            }
+        }
+    }
+
+    if (newCells->GetNumberOfCells() == 0) {
+        m_Message = "The generated revolution surface has no cells; check that the contour is not fully on the "
+                    "revolution axis.";
+        igError("{}", m_Message);
+        return false;
+    }
+
     SetOutput(0, outputMesh);
     return true;
 }
