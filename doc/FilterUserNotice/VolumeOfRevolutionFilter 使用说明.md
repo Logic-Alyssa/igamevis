@@ -105,10 +105,8 @@
 
 ## 6. 相关文件
 
-| 文件路径                                                     | 说明                |
-| ------------------------------------------------------------ | ------------------- |
-| `iGameCore/Filters/VolumeOfRevolution/iGameVolumeOfRevolutionFilter.h` | 过滤器头文件        |
-| `iGameCore/Filters/VolumeOfRevolution/iGameVolumeOfRevolutionFilter.cpp` | 过滤器实现          |
-| `Examples/Filter/VolumeOfRevolution/TestVolumeOfRevolution.cpp` | 可视化测试用例      |
-| `Examples/Filter/VolumeOfRevolution/TestVolumeOfRevolutionValidation.cpp` | 输入校验回归用例（无需模型与窗口） |
+| 文件路径                                                     | 说明         |
+| ------------------------------------------------------------ | ------------ |
+| `iGameCore/Filters/VolumeOfRevolution/iGameVolumeOfRevolutionFilter.h` | 过滤器头文件 |
+| `iGameCore/Filters/VolumeOfRevolution/iGameVolumeOfRevolutionFilter.cpp` | 过滤器实现   |
 
