@@ -4703,7 +4703,13 @@ void igQtMainWindow::initAllFilters() {
                             Vector3d(values[3], values[4], values[5]));
             filter->SetResolution(static_cast<int>(values[6]));
             filter->SetAngle(values[7] * 3.141592653589793 / 180.0);
-            if (!filter->Execute()) { showDarkFramelessMessage(title, QStringLiteral("旋转体生成失败。")); return; }
+            if (!filter->Execute()) {
+                const std::string message = filter->GetMessage();
+                showDarkFramelessMessage(title, message.empty()
+                                                    ? QStringLiteral("旋转体生成失败。")
+                                                    : QString::fromStdString(message));
+                return;
+            }
             refreshFilterResult(input, filter->GetOutput(), title);
             dialog->close();
         });
