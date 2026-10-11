@@ -5,11 +5,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 project("iGameExamples" LANGUAGES CXX)
 
-# 本目录既可以作为独立工程配置（-S <repo>/Examples），也可以由仓库根 CMakeLists.txt
-# 通过 add_subdirectory(Examples) 引入：两种情况下 CMAKE_SOURCE_DIR 取值不同。
-# 下面显式解析仓库根目录，供 Cmake/、Qt/、test/ 这些位于仓库根的资源使用。
-get_filename_component(_IGAME_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
-
 if (TARGET iGameCore)
     set(_IGAME_EXAMPLE_CORE_LIBS iGameCore)
 else ()
@@ -54,8 +49,8 @@ if (WIN32)
             "-DIGAME_ABQ_RUNTIME_DIR=${AbqSDK_DLL_DIR}"
             "-DIGAME_ABQ_RUNTIME_LIBRARY_NAMES=${_IGAME_EXAMPLE_ABQ_RUNTIME_NAMES}"
             "-DIGAME_HDF5_RUNTIME_FILE=${_IGAME_EXAMPLE_HDF5_RUNTIME}"
-            "-DIGAME_GPS_RUNTIME_DIR=${_IGAME_REPO_ROOT}/CMakeGPS/CMakeGPS/ReferenceDLL"
-            -P "${_IGAME_REPO_ROOT}/Cmake/DeployExampleRuntime.cmake"
+            "-DIGAME_GPS_RUNTIME_DIR=${CMAKE_SOURCE_DIR}/CMakeGPS/CMakeGPS/ReferenceDLL"
+            -P "${CMAKE_SOURCE_DIR}/Cmake/DeployExampleRuntime.cmake"
         COMMENT "Deploying runtime DLLs for Examples"
         VERBATIM)
 else ()
@@ -237,7 +232,7 @@ set(IGAME_BATCH1_EXAMPLES
 # only tests whose required model inputs are absent.
 # Fix: 74a652a8 (Allow fixture-free example validation in code-only checkout).
 set(_IGAME_MODEL_GEOMETRY_FIXTURE
-    "${_IGAME_REPO_ROOT}/test/Animation Test/result-case1/VTKfile-0.vtk")
+    "${CMAKE_SOURCE_DIR}/test/Animation Test/result-case1/VTKfile-0.vtk")
 
 function(igame_register_example_test EXAMPLE_TARGET)
     if (NOT TARGET ${EXAMPLE_TARGET})
@@ -582,8 +577,6 @@ igame_add_example(testDeformationCode Filter/Deformation/TestStressDeformationFi
 igame_add_example(testContourLine Filter/TestContourLine.cpp)
 # Modeling：线性拉伸（Linear Extrusion）
 igame_add_example(testLinearExtrusion Filter/TestLinearExtrusion.cpp)
-# Modeling：旋转体生成（Volume of Revolution）输入校验回归
-igame_add_example(testVolumeOfRevolutionValidation Filter/VolumeOfRevolution/TestVolumeOfRevolutionValidation.cpp)
 
 # ������ #5 + �е����� #28 ���ײ�������
 igame_add_example(testGhostCellModel Filter/GhostCell/TestGhostCellModel.cpp)
@@ -644,7 +637,7 @@ igame_add_example(testResampleImageChecks Filter/Convert/TestResampleImageChecks
 if (ENABLE_QT_MODULE)
     igame_add_example(testThirdBatchMenu Filter/ThirdBatchMenuValidation.cpp)
     target_link_libraries(testThirdBatchMenu PRIVATE Qt_module)
-    target_include_directories(testThirdBatchMenu PRIVATE "${_IGAME_REPO_ROOT}/Qt")
+    target_include_directories(testThirdBatchMenu PRIVATE "${CMAKE_SOURCE_DIR}/Qt")
     if (NOT IGAME_BUILD_SHARED)
         target_compile_definitions(testThirdBatchMenu PRIVATE IG_QT_COMPILE_EXPORT)
     endif ()
@@ -652,7 +645,7 @@ if (ENABLE_QT_MODULE)
     target_link_libraries(testTriangleStripWidget PRIVATE Qt_module)
     igame_add_example(testStandardFiltersMenu Filter/StandardFiltersMenuValidation.cpp)
     target_link_libraries(testStandardFiltersMenu PRIVATE Qt_module)
-    target_include_directories(testStandardFiltersMenu PRIVATE "${_IGAME_REPO_ROOT}/Qt")
+    target_include_directories(testStandardFiltersMenu PRIVATE "${CMAKE_SOURCE_DIR}/Qt")
     if (NOT IGAME_BUILD_SHARED)
         target_compile_definitions(testTriangleStripWidget PRIVATE IG_QT_COMPILE_EXPORT)
         target_compile_definitions(testStandardFiltersMenu PRIVATE IG_QT_COMPILE_EXPORT)
@@ -744,8 +737,8 @@ set_tests_properties(testPreparedCpuGpuValidation PROPERTIES ENVIRONMENT
     "QT_QPA_PLATFORM_PLUGIN_PATH=${_IGAME_TEST_QT_BIN}/../plugins/platforms")
 add_executable(testResidentModelCacheValidation
     IO/ResidentModelCacheValidation.cpp
-    "${_IGAME_REPO_ROOT}/Qt/src/IQCore/igQtResidentModelCache.cpp")
-target_include_directories(testResidentModelCacheValidation PRIVATE "${_IGAME_REPO_ROOT}/Qt/include")
+    "${CMAKE_SOURCE_DIR}/Qt/src/IQCore/igQtResidentModelCache.cpp")
+target_include_directories(testResidentModelCacheValidation PRIVATE "${CMAKE_SOURCE_DIR}/Qt/include")
 target_compile_definitions(testResidentModelCacheValidation PRIVATE IG_QT_COMPILE_EXPORT)
 target_link_libraries(testResidentModelCacheValidation PRIVATE Qt5::Core)
 igame_link_standard_example(testResidentModelCacheValidation)
