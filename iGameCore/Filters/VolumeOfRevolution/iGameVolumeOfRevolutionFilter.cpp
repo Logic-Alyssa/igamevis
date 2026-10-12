@@ -36,7 +36,7 @@ static bool IsSurfaceFaceCellType(IGenum cellType) {
            cellType == IG_LAGRANGE_QUADRILATERAL;
 }
 
-// 体单元（三维实体）不是轮廓，输入只含这些单元时必须拒绝，而不是退化成"把点顺序连起来"。
+// 体单元（三维实体）不是轮廓，输入只含这些单元时拒绝。
 static bool IsVolumeCellType(IGenum cellType) {
     return cellType == IG_TETRA || cellType == IG_HEXAHEDRON || cellType == IG_PYRAMID ||
            cellType == IG_PRISM || cellType == IG_VOLUME || cellType == IG_POLYHEDRON ||
@@ -141,8 +141,7 @@ static ArrayObject::Pointer CreateEmptyArrayOfSameType(ArrayObject::Pointer src,
     return nullptr;
 }
 // ---------- 主执行函数 ----------
-// 读取输入并提取轮廓。失败时返回 false 并写出可读原因（buildMessage）。
-// 这里集中承担「拒绝不符合输入条件的模型」的职责。
+// 读取输入并提取轮廓。失败时返回 false 。
 static bool BuildContour(const DataObject::Pointer& input, std::vector<Vector3d>& contourPts,
                          std::vector<RevolutionEdge>& edges, std::string& buildMessage) {
     const IGenum type = input->GetDataObjectType();
@@ -150,18 +149,18 @@ static bool BuildContour(const DataObject::Pointer& input, std::vector<Vector3d>
     if (type == IG_UNSTRUCTURED_MESH) {
         auto inMesh = DynamicCast<UnstructuredMesh>(input);
         if (!inMesh) {
-            buildMessage = "Failed to cast the input to UnstructuredMesh.";
+            buildMessage = "无法将输入转换为 UnstructuredMesh。";
             return false;
         }
         auto inPoints = inMesh->GetPoints();
         if (!inPoints || inPoints->GetNumberOfPoints() < 2) {
-            buildMessage = "UnstructuredMesh input has fewer than 2 points; a revolution contour needs at least 2.";
+            buildMessage = "UnstructuredMesh 输入的点少于 2 个；旋转轮廓至少需要 2 个点。";
             return false;
         }
         auto cells = inMesh->GetCells();
         auto types = inMesh->GetCellTypes();
         if (!cells || !types || cells->GetNumberOfCells() == 0) {
-            buildMessage = "UnstructuredMesh input has no cells; a point cloud is not a revolution contour.";
+            buildMessage = "UnstructuredMesh 输入没有单元；点云不能作为旋转轮廓。";
             return false;
         }
 
@@ -190,8 +189,8 @@ static bool BuildContour(const DataObject::Pointer& input, std::vector<Vector3d>
                     const igIndex id1 = pointIds[k + 1];
                     if (id0 < 0 || id1 < 0 || static_cast<IGsize>(id0) >= numPts ||
                         static_cast<IGsize>(id1) >= numPts) {
-                        buildMessage = "UnstructuredMesh curve cell " + std::to_string(i) +
-                                       " references a point outside the point array.";
+                        buildMessage = "UnstructuredMesh 的曲线单元 " + std::to_string(i) +
+                                       " 引用了点数组之外的点。";
                         return false;
                     }
                     edges.push_back({static_cast<IGsize>(id0), static_cast<IGsize>(id1), i});
@@ -213,35 +212,32 @@ static bool BuildContour(const DataObject::Pointer& input, std::vector<Vector3d>
             const IGsize kindCount =
                     static_cast<IGsize>(std::count(unsupportedTypes.begin(), unsupportedTypes.end(), true));
             if (unsupportedCells > 0 && volumeCells == unsupportedCells) {
-                buildMessage = "UnstructuredMesh input only contains volume cells (" +
+                buildMessage = "UnstructuredMesh 输入只包含体单元（共 " +
                                std::to_string(volumeCells) +
-                               " cells, e.g. Tetra/Hexahedron); a 3D solid cannot be revolved, provide a 2D "
-                               "contour curve instead.";
+                               " 个，如四面体/六面体）；三维实体无法旋转成曲面，请提供二维轮廓曲线。";
             } else if (firstDegenerate != IG_EMPTY_CELL) {
-                buildMessage = "UnstructuredMesh curve cells exist but none has at least 2 point ids; invalid "
-                               "contour connectivity.";
+                buildMessage = "UnstructuredMesh 中存在曲线单元，但没有一个单元有至少 2 个点；轮廓连接无效。";
             } else {
-                buildMessage = "UnstructuredMesh input has no line cells to use as a contour (" +
-                               std::to_string(numCells) + " cells of " + std::to_string(kindCount) +
-                               " cell type(s), e.g. type " + std::to_string(firstUnsupported) + " (" +
-                               GetCellTypeAsString(firstUnsupported) + ")); a 2D contour of Line/PolyLine cells "
-                               "is required.";
+                buildMessage = "UnstructuredMesh 输入中没有可用作轮廓的线段单元（共 " +
+                               std::to_string(numCells) + " 个单元、" + std::to_string(kindCount) +
+                               " 种单元类型，例如类型 " + std::to_string(firstUnsupported) + "（" +
+                               GetCellTypeAsString(firstUnsupported) + "））；需要由 Line/PolyLine 单元构成的二维轮廓。";
             }
             return false;
         }
     } else if (type == IG_SURFACE_MESH) {
         auto surf = DynamicCast<SurfaceMesh>(input);
         if (!surf) {
-            buildMessage = "Failed to cast the input to SurfaceMesh.";
+            buildMessage = "无法将输入转换为 SurfaceMesh。";
             return false;
         }
         auto pts = surf->GetPoints();
         if (!pts || pts->GetNumberOfPoints() < 3) {
-            buildMessage = "SurfaceMesh input has fewer than 3 points; its boundary cannot be a 2D contour.";
+            buildMessage = "SurfaceMesh 输入的点少于 3 个；其边界无法构成二维轮廓。";
             return false;
         }
         if (surf->GetNumberOfFaces() == 0) {
-            buildMessage = "SurfaceMesh input has no faces; its boundary cannot be a 2D contour.";
+            buildMessage = "SurfaceMesh 输入没有面片；其边界无法构成二维轮廓。";
             return false;
         }
         // 仅在确实要读取拓扑信息时才申请编辑状态（原先在类型转换检查之前调用，空指针会崩溃）。
@@ -262,40 +258,39 @@ static bool BuildContour(const DataObject::Pointer& input, std::vector<Vector3d>
             edges.push_back({static_cast<IGsize>(ids[0]), static_cast<IGsize>(ids[1]), cellId});
         }
         if (edges.empty()) {
-            buildMessage = "SurfaceMesh input has no boundary edges: a closed surface (e.g. a sphere) is not a "
-                           "2D revolution contour.";
+            buildMessage = "SurfaceMesh 输入没有边界边：封闭曲面（如球面）不能作为二维旋转轮廓。";
             return false;
         }
     } else if (type == IG_STRUCTURED_MESH) {
         auto sMesh = DynamicCast<StructuredMesh>(input);
         if (!sMesh) {
-            buildMessage = "Failed to cast the input to StructuredMesh.";
+            buildMessage = "无法将输入转换为 StructuredMesh。";
             return false;
         }
         auto pts = sMesh->GetPoints();
         if (!pts || pts->GetNumberOfPoints() < 2) {
-            buildMessage = "StructuredMesh input has fewer than 2 points; a revolution contour needs at least 2.";
+            buildMessage = "StructuredMesh 输入的点少于 2 个；旋转轮廓至少需要 2 个点。";
             return false;
         }
         const igIndex* dim = sMesh->GetDimensionSize();
         const IGsize ni = dim[0], nj = dim[1], nk = dim[2];
         if (ni < 1 || nj < 1 || nk < 1) {
-            buildMessage = "StructuredMesh input has a degenerate dimension (" + std::to_string(ni) + "x" +
-                           std::to_string(nj) + "x" + std::to_string(nk) + ").";
+            buildMessage = "StructuredMesh 输入存在退化维度（" + std::to_string(ni) + "x" +
+                           std::to_string(nj) + "x" + std::to_string(nk) + "）。";
             return false;
         }
         if (nk > 1) {
-            buildMessage = "StructuredMesh input is a 3D volume (" + std::to_string(ni) + "x" +
+            buildMessage = "StructuredMesh 输入是三维体网格（" + std::to_string(ni) + "x" +
                            std::to_string(nj) + "x" + std::to_string(nk) +
-                           "); a 1D curve or 2D surface (nk==1) is required.";
+                           "）；需要一维曲线或二维曲面（nk==1）。";
             return false;
         }
         const IGsize expectedPts = ni * nj * nk;
         const IGsize actualPts = pts->GetNumberOfPoints();
         if (actualPts != expectedPts) {
-            buildMessage = "StructuredMesh point count (" + std::to_string(actualPts) +
-                           ") does not match its dimensions (" + std::to_string(ni) + "x" + std::to_string(nj) +
-                           "x" + std::to_string(nk) + ").";
+            buildMessage = "StructuredMesh 的点数（" + std::to_string(actualPts) +
+                           "）与其维度（" + std::to_string(ni) + "x" + std::to_string(nj) +
+                           "x" + std::to_string(nk) + "）不一致。";
             return false;
         }
         contourPts.resize(actualPts);
@@ -311,7 +306,7 @@ static bool BuildContour(const DataObject::Pointer& input, std::vector<Vector3d>
             // 2D 曲面，获取所有面片
             auto faces = sMesh->GetFaces();
             if (!faces || faces->GetNumberOfCells() == 0) {
-                buildMessage = "StructuredMesh input has no faces; a 2D surface is required.";
+                buildMessage = "StructuredMesh 输入没有面片；需要二维曲面。";
                 return false;
             }
             // 构建边 -> 面片ID列表的映射
@@ -335,27 +330,26 @@ static bool BuildContour(const DataObject::Pointer& input, std::vector<Vector3d>
                 }
             }
             if (edges.empty()) {
-                buildMessage = "StructuredMesh boundary extraction failed: the structured surface has no "
-                               "boundary edges (closed surface).";
+                buildMessage = "StructuredMesh 边界提取失败：该结构曲面没有边界边（封闭曲面）。";
                 return false;
             }
         }
     } else {
-        buildMessage = "iGameVolumeOfRevolution does not support this data type (" +
-                       std::to_string(static_cast<int>(type)) + " (" + GetCellTypeAsString(type) +
-                       ")); supported inputs are UnstructuredMesh (Line/PolyLine cells), SurfaceMesh and "
-                       "StructuredMesh.";
+        buildMessage = "iGameVolumeOfRevolution 不支持该数据类型（" +
+                       std::to_string(static_cast<int>(type)) + "（" + GetCellTypeAsString(type) +
+                       "））；支持的输入为 UnstructuredMesh（Line/PolyLine 单元）、SurfaceMesh 和 "
+                       "StructuredMesh。";
         return false;
     }
 
     if (contourPts.size() < 2 || edges.empty()) {
-        buildMessage = "No valid contour points or edges found in the input.";
+        buildMessage = "输入中没有找到有效的轮廓点或轮廓边。";
         return false;
     }
     for (IGsize i = 0; i < edges.size(); ++i) {
         if (edges[i].v0 == edges[i].v1) {
-            buildMessage = "Contour edge " + std::to_string(i) + " is degenerate (both ends are point " +
-                           std::to_string(edges[i].v0) + ").";
+            buildMessage = "轮廓边 " + std::to_string(i) + " 已退化（两端都是点 " +
+                           std::to_string(edges[i].v0) + "）。";
             return false;
         }
     }
@@ -370,7 +364,7 @@ bool VolumeOfRevolutionFilter::Execute() {
 
     DataObject::Pointer input = GetInput(0);
     if (!input) {
-        m_Message = "VolumeOfRevolutionFilter has no input DataObject.";
+        m_Message = "旋转体生成：没有输入数据对象。";
         igError("{}", m_Message);
         return false;
     }
@@ -389,7 +383,7 @@ bool VolumeOfRevolutionFilter::Execute() {
     Vector3d axisDir = m_AxisDirection;
     double len = axisDir.norm();
     if (!std::isfinite(len) || len < 1e-12) {
-        m_Message = "Axis direction must be a non-zero, finite vector.";
+        m_Message = "旋转轴方向必须是非零且有限的向量。";
         igError("{}", m_Message);
         return false;
     }
@@ -397,29 +391,29 @@ bool VolumeOfRevolutionFilter::Execute() {
     Vector3d axisPt = m_AxisPoint;
     for (int c = 0; c < 3; ++c) {
         if (!std::isfinite(axisPt[c])) {
-            m_Message = "Axis point must have finite coordinates.";
+            m_Message = "轴上一点的坐标必须是有限值。";
             igError("{}", m_Message);
             return false;
         }
     }
     const double angle = m_Angle;
     if (!std::isfinite(angle)) {
-        m_Message = "Revolution angle must be finite.";
+        m_Message = "旋转角度必须是有限值。";
         igError("{}", m_Message);
         return false;
     }
     if (std::fabs(angle) < 1e-12) {
-        m_Message = "Revolution angle is zero; the result would be a degenerate (zero-area) surface.";
+        m_Message = "旋转角度为 0；结果会退化为零面积曲面。";
         igError("{}", m_Message);
         return false;
     }
     if (std::fabs(angle) > 2.0 * 3.141592653589793 + 1e-9) {
-        m_Message = "Revolution angle must not exceed one full turn (360 degrees).";
+        m_Message = "旋转角度不能超过一整圈（360 度）。";
         igError("{}", m_Message);
         return false;
     }
     if (m_Resolution < 3) {
-        m_Message = "Resolution must be at least 3 segments.";
+        m_Message = "分段数至少为 3。";
         igError("{}", m_Message);
         return false;
     }
@@ -430,8 +424,8 @@ bool VolumeOfRevolutionFilter::Execute() {
     IGsize badIndex = 0;
     std::string badValue;
     if (!ValidateReferencedPoints(contourPts, edges, badIndex, badValue)) {
-        m_Message = "Contour point " + std::to_string(badIndex) + " is not finite (" + badValue +
-                    "); the contour is invalid.";
+        m_Message = "轮廓点 " + std::to_string(badIndex) + " 不是有限值（" + badValue +
+                    "）；轮廓无效。";
         igError("{}", m_Message);
         return false;
     }
@@ -468,7 +462,7 @@ bool VolumeOfRevolutionFilter::Execute() {
 
     // 所有轮廓点都落在旋转轴上：旋转退化，只会得到零面积三角形。
     if (maxRadius <= tolerance) {
-        m_Message = "Every contour point lies on the revolution axis; the swept surface would be degenerate.";
+        m_Message = "轮廓的所有点都落在旋转轴上；旋转结果会退化。";
         igError("{}", m_Message);
         return false;
     }
@@ -498,9 +492,8 @@ bool VolumeOfRevolutionFilter::Execute() {
             if (lineLength > tolerance) {
                 lineDir /= lineLength;
                 if (std::fabs(lineDir.dot(axisDir)) > 1.0 - 1e-9) {
-                    m_Message = "The contour is a straight segment (all points are collinear) and the revolution "
-                                "axis is parallel to it; every generated triangle would have zero area. Provide a "
-                                "non-collinear 2D contour or use an axis that is not parallel to the segment.";
+                    m_Message = "轮廓是一条直线段（所有点严格共线），而旋转轴与它平行；"
+                                "生成的三角形面积全为零。请提供非共线的二维轮廓，或改用不与线段平行的旋转轴。";
                     igError("{}", m_Message);
                     return false;
                 }
@@ -643,8 +636,7 @@ bool VolumeOfRevolutionFilter::Execute() {
     }
 
     // -------- 复制单元属性 --------
-    // 只有轮廓边全部对应到真实的输入单元时才复制：cellId 为 -1（顺序连接的曲线、
-    // StructuredMesh 的 1D 曲线）没有可继承的单元属性。
+    // 只有轮廓边全部对应到真实的输入单元时才复制：cellId 为 -1（顺序连接的曲线、StructuredMesh 的 1D 曲线）没有可继承的单元属性。
     bool hasValidCellIds = true;
     for (auto& e: edges) {
         if (e.cellId == static_cast<IGsize>(-1)) {
@@ -705,8 +697,7 @@ bool VolumeOfRevolutionFilter::Execute() {
     }
 
     if (newCells->GetNumberOfCells() == 0) {
-        m_Message = "The generated revolution surface has no cells; check that the contour is not fully on the "
-                    "revolution axis.";
+        m_Message = "生成的旋转曲面没有单元；请检查轮廓是否全部落在旋转轴上。";
         igError("{}", m_Message);
         return false;
     }
