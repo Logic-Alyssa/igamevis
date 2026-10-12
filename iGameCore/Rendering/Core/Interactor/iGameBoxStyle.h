@@ -17,8 +17,18 @@ public:
     void MousePressEvent(IEvent event) override;
     void MouseMoveEvent(IEvent event) override;
     void MouseReleaseEvent(IEvent event) override;
+    bool IsInteractionActive() const override {
+        return m_SelectedItem != IG_NONE &&
+               (m_MouseMode == MouseButton::MiddleButton ||
+                (m_AllowLeftHandleDrag && m_MouseMode == MouseButton::LeftButton) ||
+                (m_CenterTranslationMode && m_SelectedItem == IG_MID_POINT &&
+                 m_MouseMode == MouseButton::LeftButton));
+    }
 
     void InitBox(const Point& p1, const Point& p2);
+    void SetAllowRotation(bool allow) { m_AllowRotation = allow; }
+    void SetAllowLeftHandleDrag(bool allow) { m_AllowLeftHandleDrag = allow; }
+    void SetCenterTranslationMode(bool enabled) { m_CenterTranslationMode = enabled; }
     void DeleteBox();
 
     void ToDraw();
@@ -87,6 +97,9 @@ protected:
 
     igm::vec2 m_PressSite = igm::vec2{0.0f};
     bool m_MeetedBox{};
+    bool m_AllowRotation{true};
+    bool m_AllowLeftHandleDrag{false};
+    bool m_CenterTranslationMode{false};
     MouseButton m_MousePressButton{MouseButton::NoButton};
 
     std::vector<IGuint> m_DrawHandles;

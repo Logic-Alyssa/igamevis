@@ -13,15 +13,28 @@ public:
 
     void MousePressEvent(IEvent event) override;
     void MouseMoveEvent(IEvent event) override;
+    void MouseReleaseEvent(IEvent event) override;
+    bool IsInteractionActive() const override {
+        return m_SelectedPoint != nullptr &&
+               (m_MouseMode == MouseButton::MiddleButton ||
+                ((m_AllowLeftHandleDrag ||
+                  (m_CenterTranslationMode && m_SelectedPoint == &m_StartPoint)) &&
+                 m_MouseMode == MouseButton::LeftButton));
+    }
     void SetShow(bool show);
     bool GetShow() const;
     void SetPoint(const Point& startPoint, const Point& endPoint);
+    void SetMoveEndWithStart(bool enabled) { m_MoveEndWithStart = enabled; }
+    void SetShowSphere(bool enabled) { m_ShowSphere = enabled; }
+    void SetAllowLeftHandleDrag(bool enabled) { m_AllowLeftHandleDrag = enabled; }
+    void SetCenterTranslationMode(bool enabled) { m_CenterTranslationMode = enabled; }
     const Point& GetStartPoint();
     const Point& GetEndPoint();
     void DrawRadial();
     void ClearDrawRadial();
     void _SetPointMoveCallBack(const std::string& name,
                                std::function<void()> callBack);
+    void RemovePointMoveCallBack(const std::string& name);
 #define SetPointMoveCallBack(callBack)                                         \
     _SetPointMoveCallBack(std::string(__FILE__) + std::to_string(__LINE__),    \
                           callBack)
@@ -35,6 +48,11 @@ protected:
     ~RadialStyle() = default;
 
     bool m_Show{};
+    bool m_MoveEndWithStart{};
+    bool m_ShowSphere{};
+    bool m_AllowLeftHandleDrag{};
+    bool m_CenterTranslationMode{};
+    Point* m_HoveredPoint{nullptr};
 
     float m_MaxDis{};
 

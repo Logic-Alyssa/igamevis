@@ -271,18 +271,20 @@ std::tuple<bool, int, Point> BoxStyle::MeetOpePoint(IEvent event,
     std::tuple<bool, int, Point> re(false, -1, Point{});
     auto& opePoints = m_DynamicBox->GetOpePoints();
     float minDist = std::numeric_limits<float>::max();
-    auto maxDist = m_DynamicBox->GetLength().length() * 0.02;
     for (int i = 0; i < 6; i++) {
-        float dist =
-                Line::ComputePointToLineDis(rayStart, rayDir, opePoints[i]);
-        if (dist > maxDist) continue;
-        float pointToRayStartDist = (rayStart - opePoints[i]).length();
-        //if (!std::get<0>(re) || dist < minDist) {
-        if (!std::get<0>(re) || pointToRayStartDist < minDist) {
+        const Point& point = opePoints[i];
+        const igm::vec4 clip = m_MVP * PointToVec4(point);
+        if (clip.w <= 0.f) continue;
+        const float x = (clip.x / clip.w + 1.f) * m_Interactor->GetWidth() * 0.5f;
+        const float y = (1.f - clip.y / clip.w) * m_Interactor->GetHeight() * 0.5f;
+        const float dx = x - event.pos.x, dy = y - event.pos.y;
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        if (dist > 12.f) continue;
+        if (!std::get<0>(re) || dist < minDist) {
             std::get<0>(re) = true;
             std::get<1>(re) = i;
-            std::get<2>(re) = opePoints[i];
-            minDist = pointToRayStartDist;
+            std::get<2>(re) = point;
+            minDist = dist;
         }
     }
     return re;
@@ -292,10 +294,13 @@ std::tuple<bool, Point> BoxStyle::MeetCenterPoint(IEvent event,
                                                   const Point& rayStart,
                                                   const Point& rayDir) {
     std::tuple<bool, Point> re(false, Point{});
-    auto& midPoint = m_DynamicBox->GetMidPoint();
-    auto maxDist = m_DynamicBox->GetLength().length() * 0.02;
-    float dist = Line::ComputePointToLineDis(rayStart, rayDir, midPoint);
-    if (dist <= maxDist) {
+    const auto& midPoint = m_DynamicBox->GetMidPoint();
+    const igm::vec4 clip = m_MVP * PointToVec4(midPoint);
+    if (clip.w <= 0.f) return re;
+    const float x = (clip.x / clip.w + 1.f) * m_Interactor->GetWidth() * 0.5f;
+    const float y = (1.f - clip.y / clip.w) * m_Interactor->GetHeight() * 0.5f;
+    const float dx = x - event.pos.x, dy = y - event.pos.y;
+    if (std::sqrt(dx * dx + dy * dy) <= 26.f) {
         std::get<0>(re) = true;
         std::get<1>(re) = midPoint;
     }
@@ -399,8 +404,21 @@ void BoxStyle::MousePressEvent(IEvent event) {
 }
 
 void BoxStyle::LeftButtonPress(IEvent event) {
-    //USE BOX
-    //UNNEEDED FUNC
+    if (m_CenterTranslationMode) {
+        auto [rayStart, rayDir] = GetRayStartAndDir(event);
+        auto meet = MeetCenterPoint(event, rayStart, rayDir);
+        if (std::get<0>(meet)) {
+            m_SelectedItem = IG_MID_POINT;
+            m_PrePosition = std::get<1>(meet);
+            const igm::vec4 clip = m_MVP * PointToVec4(m_PrePosition);
+            m_SelectedNDCZ = clip.z / clip.w;
+            return;
+        }
+    }
+    if (!m_AllowLeftHandleDrag) return;
+    MiddleButtonPress(event);
+    // Left drag only adjusts a handle. Middle drag also translates edges.
+    if (m_SelectedItem != IG_POINT) m_SelectedItem = IG_NONE;
 }
 
 void BoxStyle::MiddleButtonPress(IEvent event) {
@@ -410,7 +428,7 @@ void BoxStyle::MiddleButtonPress(IEvent event) {
 
     auto [rayStart, rayDir] = GetRayStartAndDir(event);
 
-    if (m_SelectedItem == IG_NONE) {
+    if (!m_CenterTranslationMode && m_SelectedItem == IG_NONE) {
         //Select Box Ope Point
         auto meet = MeetOpePoint(event, rayStart, rayDir);
         if (std::get<0>(meet)) {
@@ -430,7 +448,7 @@ void BoxStyle::MiddleButtonPress(IEvent event) {
         }
     }
 
-    if (m_SelectedItem == IG_NONE) {
+    if (m_AllowRotation && m_SelectedItem == IG_NONE) {
         //Select Box Face
         auto meet = MeetBoxRotate(event, rayStart, rayDir);
         if (std::get<0>(meet)) {
@@ -455,7 +473,8 @@ void BoxStyle::RightButtonPress(IEvent event) {
 }
 
 void BoxStyle::MouseMoveEvent(IEvent event) {
-    BasicStyle::MouseMoveEvent(event);
+    if (!m_AllowLeftHandleDrag && !m_CenterTranslationMode)
+        BasicStyle::MouseMoveEvent(event);
     if (!SelectionParameter::Instance().GetHaveBox()) return;
     if (m_DynamicBox == nullptr) return;
     ChangeBoxDrawMode(event);
@@ -470,10 +489,11 @@ void BoxStyle::ChangeBoxDrawMode(IEvent event) {
     auto [rayStart, rayDir] = GetRayStartAndDir(event);
 
     auto preBoxDrawMode = m_BoxDrawMode;
+    const int previousPoint = m_BoxDrawModeOpePoint;
 
     m_BoxDrawMode = IG_NONE;
 
-    if (m_BoxDrawMode == IG_NONE) {
+    if (!m_CenterTranslationMode && m_BoxDrawMode == IG_NONE) {
         //Select Box Ope Point
         auto meet = MeetOpePoint(event, rayStart, rayDir);
         if (std::get<0>(meet)) {
@@ -482,11 +502,10 @@ void BoxStyle::ChangeBoxDrawMode(IEvent event) {
         }
     }
 
-    //if (m_BoxDrawMode == IG_NONE) {
-    //    //Select Mid Point
-    //    auto meet = MeetCenterPoint(event, rayStart, rayDir);
-    //    if (std::get<0>(meet)) { m_BoxDrawMode = IG_MID_POINT; }
-    //}
+    if (m_CenterTranslationMode && m_BoxDrawMode == IG_NONE) {
+        auto meet = MeetCenterPoint(event, rayStart, rayDir);
+        if (std::get<0>(meet)) m_BoxDrawMode = IG_MID_POINT;
+    }
 
     if (m_BoxDrawMode == IG_NONE) {
         //Select OpePoint Edge
@@ -495,13 +514,14 @@ void BoxStyle::ChangeBoxDrawMode(IEvent event) {
         if (std::get<0>(meet)) { m_BoxDrawMode = IG_EDGE; }
     }
 
-    if (m_BoxDrawMode == IG_NONE) {
+    if (m_AllowRotation && m_BoxDrawMode == IG_NONE) {
         //Select Box Face
         auto meet = MeetBoxRotate(event, rayStart, rayDir);
         if (std::get<0>(meet)) { m_BoxDrawMode = IG_CELL; }
     }
 
-    if (m_BoxDrawMode == preBoxDrawMode) return;
+    if (m_BoxDrawMode == preBoxDrawMode &&
+        (m_BoxDrawMode != IG_POINT || previousPoint == m_BoxDrawModeOpePoint)) return;
 
     ClearDraw();
     ToDraw();
@@ -511,7 +531,11 @@ void BoxStyle::OperateBox(IEvent event) {
     if (!SelectionParameter::Instance().GetHaveBox()) return;
     if (m_SelectedItem == IG_NONE) return;
     if (m_DynamicBox == nullptr) return;
-    if (m_MouseMode != MouseButton::MiddleButton) return;
+    if (m_MouseMode != MouseButton::MiddleButton &&
+        !(m_AllowLeftHandleDrag && m_MouseMode == MouseButton::LeftButton &&
+          m_SelectedItem == IG_POINT) &&
+        !(m_CenterTranslationMode && m_MouseMode == MouseButton::LeftButton &&
+          m_SelectedItem == IG_MID_POINT)) return;
 
     igm::vec2 pos = event.pos;
 
@@ -563,6 +587,7 @@ void BoxStyle::MouseReleaseEvent(IEvent event) {
         }
     }
     m_MousePressButton = MouseButton::NoButton;
+    m_SelectedItem = IG_NONE;
     ChangeBoxDrawMode(event);
 }
 
@@ -688,12 +713,15 @@ void BoxStyle::ToDraw() {
     auto painter = m_Scene->GetPainter3D();
 
     painter->SetPen(3);
-    painter->SetPen(Color::White);
+    if (m_CenterTranslationMode) painter->SetPen(0, 125, 240);
+    else painter->SetPen(Color::White);
     if (m_BoxDrawMode == IG_EDGE) painter->SetPen(Color::Yellow);
-    for (int i = 0; i < 6; i++) {
-        int opeLineHandle = painter->DrawLine(m_DynamicBox->GetMidPoint(),
-                                              m_DynamicBox->GetOpePoints()[i]);
-        m_DrawHandles.push_back(opeLineHandle);
+    if (!m_CenterTranslationMode) {
+        for (int i = 0; i < 6; i++) {
+            int opeLineHandle = painter->DrawLine(m_DynamicBox->GetMidPoint(),
+                                                   m_DynamicBox->GetOpePoints()[i]);
+            m_DrawHandles.push_back(opeLineHandle);
+        }
     }
     auto edgeLines = m_DynamicBox->GetAllEdges();
     for (auto& edgeLine: edgeLines) {
@@ -701,11 +729,12 @@ void BoxStyle::ToDraw() {
         m_DrawHandles.push_back(edgeHandle);
     }
 
-    //painter->SetPen(10);
-    //painter->SetPen(Color::Blue);
-    //if (m_BoxDrawMode == IG_MID_POINT) painter->SetPen(16);
-    //int midHandle = painter->DrawPoint(m_DynamicBox->GetMidPoint());
-    //m_DrawHandles.push_back(midHandle);
+    if (m_CenterTranslationMode) {
+        painter->SetPen(m_BoxDrawMode == IG_MID_POINT ? 16 : 11);
+        painter->SetPen(m_BoxDrawMode == IG_MID_POINT ? Color::Magenta : Color::Orange);
+        m_DrawHandles.push_back(painter->DrawPoint(m_DynamicBox->GetMidPoint()));
+        return;
+    }
 
     painter->SetPen(Color::Red);
     for (int i = 0; i < 6; i++) {

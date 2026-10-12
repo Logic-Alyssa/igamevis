@@ -2,6 +2,8 @@
 #include "iGameInteractor.h"
 #include "iGameLine.h"
 #include "iGameScene.h"
+#include <cmath>
+#include <limits>
 using namespace std;
 IGAME_NAMESPACE_BEGIN
 
@@ -32,7 +34,39 @@ void RadialStyle::DrawRadial() {
     if (!m_Show) return;
     auto painter = m_Scene->GetPainter3D();
 
-    painter->SetPen(7);
+    if (m_CenterTranslationMode) {
+        painter->SetPen(m_HoveredPoint == &m_StartPoint ? 16 : 11);
+        painter->SetPen(m_HoveredPoint == &m_StartPoint ? Color::Magenta : Color::Orange);
+        m_DrawHandles.push_back(painter->DrawPoint(m_StartPoint));
+        if (m_ShowSphere) {
+            const float radius = (m_EndPoint - m_StartPoint).length();
+            painter->SetPen(3);
+            painter->SetPen(0, 125, 240);
+            // DrawCircle can inherit a filled brush from the scene. Use lines
+            // so the region always remains hollow over the input model.
+            constexpr int segments = 64;
+            constexpr double pi = 3.14159265358979323846;
+            for (int plane = 0; plane < 3; ++plane) {
+                for (int i = 0; i < segments; ++i) {
+                    const double a = 2.0 * pi * i / segments;
+                    const double b = 2.0 * pi * (i + 1) / segments;
+                    auto ringPoint = [&](double angle) {
+                        Point p = m_StartPoint;
+                        const float u = radius * static_cast<float>(std::cos(angle));
+                        const float v = radius * static_cast<float>(std::sin(angle));
+                        if (plane == 0) { p[1] += u; p[2] += v; }
+                        else if (plane == 1) { p[0] += u; p[2] += v; }
+                        else { p[0] += u; p[1] += v; }
+                        return p;
+                    };
+                    m_DrawHandles.push_back(painter->DrawLine(ringPoint(a), ringPoint(b)));
+                }
+            }
+        }
+        return;
+    }
+
+    painter->SetPen(m_HoveredPoint == &m_StartPoint ? 13 : 9);
     painter->SetPen(Color::Blue);
     int startPointHandle = painter->DrawPoint(m_StartPoint);
     m_DrawHandles.push_back(startPointHandle);
@@ -42,10 +76,18 @@ void RadialStyle::DrawRadial() {
     int lineHandle = painter->DrawLine(m_StartPoint, m_EndPoint);
     m_DrawHandles.push_back(lineHandle);
 
-    painter->SetPen(7);
+    painter->SetPen(m_HoveredPoint == &m_EndPoint ? 13 : 9);
     painter->SetPen(Color::Red);
     int endPointHandle = painter->DrawPoint(m_EndPoint);
     m_DrawHandles.push_back(endPointHandle);
+    if (m_ShowSphere) {
+        const float radius = (m_EndPoint - m_StartPoint).length();
+        painter->SetPen(2);
+        painter->SetPen(Color::Yellow);
+        m_DrawHandles.push_back(painter->DrawCircle(m_StartPoint, Vector3f(1, 0, 0), radius, 64));
+        m_DrawHandles.push_back(painter->DrawCircle(m_StartPoint, Vector3f(0, 1, 0), radius, 64));
+        m_DrawHandles.push_back(painter->DrawCircle(m_StartPoint, Vector3f(0, 0, 1), radius, 64));
+    }
 }
 
 void RadialStyle::ClearDrawRadial() {
@@ -64,28 +106,27 @@ void RadialStyle::MousePressEvent(IEvent event) {
     m_SelectedPoint = nullptr;
     if (!m_Show) return;
 
-    if (event.button != MouseButton::MiddleButton) return;
+    if (event.button != MouseButton::MiddleButton &&
+        !((m_AllowLeftHandleDrag || m_CenterTranslationMode) &&
+          event.button == MouseButton::LeftButton)) return;
 
     m_MVP = m_Interactor->GetMVP();
     m_InvertedMVP = m_MVP.invert();
 
     auto& pos = event.pos;
 
-    igm::vec3 nearPoint = GetNearWorldCoord(pos, m_InvertedMVP);
-    igm::vec3 farPoint = GetFarWorldCoord(pos, m_InvertedMVP);
-    igm::vec3 rayDir = (farPoint - nearPoint).normalized();
-
-    Point lineStartPoint = Point(nearPoint.x, nearPoint.y, nearPoint.z);
-    Point lineDir = Point(rayDir.x, rayDir.y, rayDir.z);
-
-    float tolerance = m_MaxDis;
-
-    float distToStart =
-            Line::ComputePointToLineDis(lineStartPoint, lineDir, m_StartPoint);
-    bool startSelected = (distToStart <= tolerance);
-    float distToEnd =
-            Line::ComputePointToLineDis(lineStartPoint, lineDir, m_EndPoint);
-    bool endSelected = (distToEnd <= tolerance);
+    const auto screenDistance = [this, &pos](const Point& point) {
+        const igm::vec4 clip = m_MVP * igm::vec4(point[0], point[1], point[2], 1.f);
+        if (clip.w <= 0.f) return std::numeric_limits<float>::max();
+        const float x = (clip.x / clip.w + 1.f) * m_Interactor->GetWidth() * 0.5f;
+        const float y = (1.f - clip.y / clip.w) * m_Interactor->GetHeight() * 0.5f;
+        const float dx = x - pos.x, dy = y - pos.y;
+        return std::sqrt(dx * dx + dy * dy);
+    };
+    const float distToStart = screenDistance(m_StartPoint);
+    const float distToEnd = screenDistance(m_EndPoint);
+    const bool startSelected = distToStart <= (m_CenterTranslationMode ? 26.f : 12.f);
+    const bool endSelected = !m_CenterTranslationMode && distToEnd <= 12.f;
 
     if (startSelected && endSelected) {
         m_SelectedPoint =
@@ -105,10 +146,32 @@ void RadialStyle::MousePressEvent(IEvent event) {
 }
 
 void RadialStyle::MouseMoveEvent(IEvent event) {
-
-    if (m_SelectedPoint == nullptr) return;
     if (!m_Show) return;
-    if (m_MouseMode != MouseButton::MiddleButton) return;
+    if (m_SelectedPoint == nullptr) {
+        m_MVP = m_Interactor->GetMVP();
+        const auto distance = [this, &event](const Point& point) {
+            const igm::vec4 clip = m_MVP * igm::vec4(point[0], point[1], point[2], 1.f);
+            if (clip.w <= 0.f) return std::numeric_limits<float>::max();
+            const float x = (clip.x / clip.w + 1.f) * m_Interactor->GetWidth() * 0.5f;
+            const float y = (1.f - clip.y / clip.w) * m_Interactor->GetHeight() * 0.5f;
+            const float dx = x - event.pos.x, dy = y - event.pos.y;
+            return std::sqrt(dx * dx + dy * dy);
+        };
+        const float a = distance(m_StartPoint), b = distance(m_EndPoint);
+        Point* hovered = nullptr;
+        if (m_CenterTranslationMode) {
+            if (a <= 26.f) hovered = &m_StartPoint;
+        } else if (a <= 12.f || b <= 12.f) {
+            hovered = a <= b ? &m_StartPoint : &m_EndPoint;
+        }
+        if (hovered != m_HoveredPoint) {
+            m_HoveredPoint = hovered;
+            ClearDrawRadial();
+            DrawRadial();
+        }
+        return;
+    }
+    if (!IsInteractionActive()) return;
 
     igm::vec2 pos = event.pos;
 
@@ -119,15 +182,29 @@ void RadialStyle::MouseMoveEvent(IEvent event) {
     igm::vec4 newPoint_WorldCoord = m_InvertedMVP * Point_NDC;
     newPoint_WorldCoord /= newPoint_WorldCoord.w;
 
-    *m_SelectedPoint = Point(newPoint_WorldCoord.x, newPoint_WorldCoord.y,
-                             newPoint_WorldCoord.z);
+    const Point newPoint(newPoint_WorldCoord.x, newPoint_WorldCoord.y,
+                         newPoint_WorldCoord.z);
+    if (m_MoveEndWithStart && m_SelectedPoint == &m_StartPoint)
+        m_EndPoint = m_EndPoint + (newPoint - m_StartPoint);
+    *m_SelectedPoint = newPoint;
+    ClearDrawRadial();
+    DrawRadial();
     CallBack();
+}
+
+void RadialStyle::MouseReleaseEvent(IEvent event) {
+    BasicStyle::MouseReleaseEvent(event);
+    m_SelectedPoint = nullptr;
 }
 
 void RadialStyle::SetShow(bool show) {
     if (m_Show == show) return;
     m_Show = show;
-    if (m_Show == false) ClearDrawRadial();
+    if (m_Show == false) {
+        ClearDrawRadial();
+        m_HoveredPoint = nullptr;
+        m_SelectedPoint = nullptr;
+    }
     else
         DrawRadial();
 }
@@ -135,9 +212,11 @@ void RadialStyle::SetShow(bool show) {
 bool RadialStyle::GetShow() const { return m_Show; }
 
 void RadialStyle::SetPoint(const Point& startPoint, const Point& endPoint) {
+    if (m_Show) ClearDrawRadial();
     m_StartPoint = startPoint;
     m_EndPoint = endPoint;
     m_MaxDis = (m_StartPoint - m_EndPoint).length() * 0.02;
+    if (m_Show) DrawRadial();
 }
 
 const Point& RadialStyle::GetStartPoint() { return m_StartPoint; }
@@ -145,7 +224,11 @@ const Point& RadialStyle::GetStartPoint() { return m_StartPoint; }
 const Point& RadialStyle::GetEndPoint() { return m_EndPoint; }
 
 void RadialStyle::_SetPointMoveCallBack(const std::string& name,
-                                        std::function<void()> callBack) {
+                                       std::function<void()> callBack) {
     m_PointMoveCallBacks[name] = callBack;
+}
+
+void RadialStyle::RemovePointMoveCallBack(const std::string& name) {
+    m_PointMoveCallBacks.erase(name);
 }
 IGAME_NAMESPACE_END
