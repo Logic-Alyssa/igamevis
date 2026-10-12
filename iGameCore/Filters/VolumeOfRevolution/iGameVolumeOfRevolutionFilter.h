@@ -47,7 +47,7 @@ private:
     Vector3d m_AxisDirection; // 轴向方向，默认 (0,0,1)
     Vector3d m_AxisPoint;     // 轴上一点，默认 (0,0,0)
 
-    // 记录非致命提示与致命失败原因（与 iGameLinearExtrusionFilter 的同类约定一致）
+    // 记录非致命提示与致命失败原因
     std::string m_Message;
 };
 
