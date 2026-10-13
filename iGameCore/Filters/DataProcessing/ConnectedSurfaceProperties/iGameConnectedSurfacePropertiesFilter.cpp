@@ -1,6 +1,7 @@
 #include "iGameConnectedSurfacePropertiesFilter.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <queue>
@@ -52,14 +53,260 @@ double Determinant(const Vector3d& first, const Vector3d& second, const Vector3d
             + first[2] * (second[0] * third[1] - second[1] * third[0]);
 }
 
-double PolygonArea(const SurfaceMesh::Pointer& mesh, const FacePointIds& pointIds) {
-    Vector3d areaVector(0.0, 0.0, 0.0);
-    for (std::size_t index = 0; index < pointIds.size(); ++index) {
-        const Vector3d current = ToDoublePoint(mesh->GetPoint(pointIds[index]));
-        const Vector3d next = ToDoublePoint(mesh->GetPoint(pointIds[(index + 1) % pointIds.size()]));
-        areaVector += current.cross(next);
+Vector3d PolygonNormal(const SurfaceMesh::Pointer& mesh, const FacePointIds& pointIds) {
+    Vector3d normal(0.0, 0.0, 0.0);
+    Vector3d firstEdge;
+    std::size_t commonPointId = 0;
+    std::size_t pointId = 0;
+    for (; pointId + 2 < pointIds.size(); ++pointId) {
+        const Vector3d common = ToDoublePoint(mesh->GetPoint(pointIds[pointId]));
+        firstEdge = ToDoublePoint(mesh->GetPoint(pointIds[pointId + 1])) - common;
+        if (firstEdge.squaredNorm() > 0.0) {
+            commonPointId = pointId;
+            pointId += 2;
+            break;
+        }
     }
-    return 0.5 * areaVector.length();
+    if (pointId >= pointIds.size()) return normal;
+
+    const Vector3d common = ToDoublePoint(mesh->GetPoint(pointIds[commonPointId]));
+    for (; pointId < pointIds.size(); ++pointId) {
+        const Vector3d nextEdge = ToDoublePoint(mesh->GetPoint(pointIds[pointId])) - common;
+        const Vector3d cross = firstEdge.cross(nextEdge);
+        normal += cross;
+        firstEdge = nextEdge;
+    }
+    const double length = normal.length();
+    return length == 0.0 ? normal : normal / length;
+}
+
+double PolygonArea(const SurfaceMesh::Pointer& mesh, const FacePointIds& pointIds) {
+    const Vector3d normal = PolygonNormal(mesh, pointIds);
+    const double absoluteNormal[3]{std::abs(normal[0]), std::abs(normal[1]), std::abs(normal[2])};
+    const int projectionAxis = absoluteNormal[0] > absoluteNormal[1]
+            ? (absoluteNormal[0] > absoluteNormal[2] ? 0 : 2)
+            : (absoluteNormal[1] > absoluteNormal[2] ? 1 : 2);
+    if (absoluteNormal[projectionAxis] == 0.0) return 0.0;
+
+    double projectedArea = 0.0;
+    for (std::size_t index = 0; index < pointIds.size(); ++index) {
+        const Vector3d previous = ToDoublePoint(mesh->GetPoint(pointIds[index]));
+        const Vector3d current = ToDoublePoint(mesh->GetPoint(
+                pointIds[(index + 1) % pointIds.size()]));
+        const Vector3d next = ToDoublePoint(mesh->GetPoint(
+                pointIds[(index + 2) % pointIds.size()]));
+        if (projectionAxis == 0) projectedArea += current[1] * (next[2] - previous[2]);
+        else if (projectionAxis == 1) projectedArea += current[0] * (next[2] - previous[2]);
+        else projectedArea += current[0] * (next[1] - previous[1]);
+    }
+    return std::abs(projectedArea / (2.0 * absoluteNormal[projectionAxis]));
+}
+
+bool QuadUsesFirstDiagonal(const SurfaceMesh::Pointer& mesh, const FacePointIds& pointIds) {
+    const Vector3d point0 = ToDoublePoint(mesh->GetPoint(pointIds[0]));
+    const Vector3d point1 = ToDoublePoint(mesh->GetPoint(pointIds[1]));
+    const Vector3d point2 = ToDoublePoint(mesh->GetPoint(pointIds[2]));
+    const Vector3d point3 = ToDoublePoint(mesh->GetPoint(pointIds[3]));
+    const Vector3d firstDiagonal = point2 - point0;
+    const Vector3d secondDiagonal = point3 - point1;
+    bool useFirst = firstDiagonal.squaredNorm() < secondDiagonal.squaredNorm();
+
+    Vector3d firstSide;
+    Vector3d secondSide;
+    Vector3d firstNormal;
+    Vector3d secondNormal;
+    if (useFirst) {
+        firstSide = point1 - point0;
+        secondSide = point3 - point0;
+        firstNormal = firstSide.cross(firstDiagonal);
+        secondNormal = firstDiagonal.cross(secondSide);
+    } else {
+        firstSide = point2 - point1;
+        secondSide = point0 - point1;
+        firstNormal = firstSide.cross(secondDiagonal);
+        secondNormal = secondDiagonal.cross(secondSide);
+    }
+    Vector3d normal = firstNormal + secondNormal;
+    const double normalLength = normal.length();
+    if (normalLength == 0.0) return useFirst;
+    normal /= normalLength;
+
+    const bool concave = firstNormal.dot(normal) < 0.0 || secondNormal.dot(normal) < 0.0;
+    if (!concave) return useFirst;
+
+    useFirst = !useFirst;
+    if (useFirst) {
+        firstSide = point1 - point0;
+        secondSide = point3 - point0;
+        firstNormal = firstSide.cross(firstDiagonal);
+        secondNormal = firstDiagonal.cross(secondSide);
+    } else {
+        firstSide = point2 - point1;
+        secondSide = point0 - point1;
+        firstNormal = firstSide.cross(secondDiagonal);
+        secondNormal = secondDiagonal.cross(secondSide);
+    }
+    if (firstNormal.dot(normal) > 0.0 && secondNormal.dot(normal) > 0.0) return useFirst;
+
+    // vtkPolygon falls back to its ear-cut/quad path for a poorly shaped quad.
+    // That path retains the 0-2 diagonal for these non-planar cases.
+    return true;
+}
+
+struct EarVertex {
+    std::size_t id{};
+    Vector3d point;
+    double measure{};
+    EarVertex* previous{};
+    EarVertex* next{};
+    bool active{true};
+    unsigned int version{};
+};
+
+double PlaneValue(const Vector3d& normal, const Vector3d& origin, const Vector3d& point) {
+    return normal.dot(point - origin);
+}
+
+bool SegmentsIntersect(const Vector3d& firstStart, const Vector3d& firstEnd,
+                       const Vector3d& secondStart, const Vector3d& secondEnd,
+                       double tolerance) {
+    const Vector3d firstDirection = firstEnd - firstStart;
+    const Vector3d secondDirection = secondEnd - secondStart;
+    const Vector3d offset = firstStart - secondStart;
+    const double firstLength2 = firstDirection.squaredNorm();
+    const double secondLength2 = secondDirection.squaredNorm();
+    const double directionDot = firstDirection.dot(secondDirection);
+    const double denominator = firstLength2 * secondLength2 - directionDot * directionDot;
+    if (std::abs(denominator) <= tolerance) return false;
+
+    const double firstParameter = (directionDot * secondDirection.dot(offset)
+                                   - secondLength2 * firstDirection.dot(offset)) / denominator;
+    const double secondParameter = (firstLength2 * secondDirection.dot(offset)
+                                    - directionDot * firstDirection.dot(offset)) / denominator;
+    return firstParameter >= 0.0 && firstParameter <= 1.0
+            && secondParameter >= 0.0 && secondParameter <= 1.0;
+}
+
+double EarMeasure(EarVertex* vertex, const Vector3d& normal) {
+    const Vector3d first = vertex->point - vertex->previous->point;
+    const Vector3d second = vertex->next->point - vertex->point;
+    const Vector3d third = vertex->previous->point - vertex->next->point;
+    const double area = first.cross(second).dot(normal);
+    if (area <= 0.0) return vertex->measure = -1.0;
+    const double perimeter = first.length() + second.length() + third.length();
+    return vertex->measure = perimeter * perimeter / area;
+}
+
+bool CanRemoveEar(EarVertex* current, int vertexCount, const Vector3d& normal,
+                  double tolerance) {
+    if (vertexCount <= 3) return true;
+    EarVertex* previous = current->previous;
+    EarVertex* next = current->next;
+    Vector3d splitNormal = (next->point - previous->point).cross(normal);
+    const double splitLength = splitNormal.length();
+    if (splitLength == 0.0) return false;
+    splitNormal /= splitLength;
+
+    int valueSign = 0;
+    bool hasNegative = false;
+    double value = PlaneValue(splitNormal, previous->point, next->next->point);
+    valueSign = value > tolerance ? 1 : (value < -tolerance ? -1 : 0);
+    hasNegative = valueSign < 0;
+    for (EarVertex* vertex = next->next->next; vertex != previous; vertex = vertex->next) {
+        value = PlaneValue(splitNormal, previous->point, vertex->point);
+        const int nextSign = value > tolerance ? 1 : (value < -tolerance ? -1 : 0);
+        if (nextSign != valueSign) {
+            hasNegative = hasNegative || nextSign < 0;
+            if (SegmentsIntersect(previous->point, next->point,
+                                  vertex->point, vertex->previous->point, tolerance)) {
+                return false;
+            }
+            valueSign = nextSign;
+        }
+    }
+    return hasNegative;
+}
+
+bool TriangulatePolygon(const SurfaceMesh::Pointer& mesh, const FacePointIds& pointIds,
+                        std::vector<std::array<std::size_t, 3>>& triangles) {
+    std::vector<EarVertex> vertices(pointIds.size());
+    Vector3d minimum(std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+                     std::numeric_limits<double>::max());
+    Vector3d maximum(std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest(),
+                     std::numeric_limits<double>::lowest());
+    for (std::size_t index = 0; index < pointIds.size(); ++index) {
+        auto& vertex = vertices[index];
+        vertex.id = index;
+        vertex.point = ToDoublePoint(mesh->GetPoint(pointIds[index]));
+        vertex.previous = &vertices[index == 0 ? pointIds.size() - 1 : index - 1];
+        vertex.next = &vertices[index + 1 == pointIds.size() ? 0 : index + 1];
+        for (int axis = 0; axis < 3; ++axis) {
+            minimum[axis] = std::min(minimum[axis], vertex.point[axis]);
+            maximum[axis] = std::max(maximum[axis], vertex.point[axis]);
+        }
+    }
+    const double tolerance = 1.0e-6 * (maximum - minimum).length();
+    const double tolerance2 = tolerance * tolerance;
+    EarVertex* head = vertices.data();
+    int vertexCount = static_cast<int>(vertices.size());
+    for (int checked = 0; checked < static_cast<int>(vertices.size()); ++checked) {
+        EarVertex* next = head->next;
+        if ((head->point - next->point).squaredNorm() < tolerance2) {
+            next->active = false;
+            head->next = next->next;
+            next->next->previous = head;
+            --vertexCount;
+        } else {
+            head = next;
+        }
+    }
+    if (vertexCount < 3) return false;
+
+    Vector3d normal(0.0, 0.0, 0.0);
+    const Vector3d anchor = head->point;
+    for (EarVertex* vertex = head->next; vertex->next != head; vertex = vertex->next)
+        normal += (vertex->point - anchor).cross(vertex->next->point - anchor);
+    const double normalLength = normal.length();
+    if (normalLength == 0.0) return false;
+    normal /= normalLength;
+
+    struct QueueEntry {
+        double measure;
+        std::size_t id;
+        unsigned int version;
+        bool operator>(const QueueEntry& other) const {
+            if (measure != other.measure) return measure > other.measure;
+            return id > other.id;
+        }
+    };
+    std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> queue;
+    const auto update = [&queue, &normal](EarVertex* vertex) {
+        ++vertex->version;
+        if (EarMeasure(vertex, normal) > 0.0)
+            queue.push({vertex->measure, vertex->id, vertex->version});
+    };
+    EarVertex* vertex = head;
+    do {
+        update(vertex);
+        vertex = vertex->next;
+    } while (vertex != head);
+
+    while (vertexCount > 2 && !queue.empty()) {
+        const QueueEntry entry = queue.top();
+        queue.pop();
+        EarVertex* ear = &vertices[entry.id];
+        if (!ear->active || ear->version != entry.version) continue;
+        if (!CanRemoveEar(ear, vertexCount, normal, tolerance)) continue;
+        triangles.push_back({ear->id, ear->next->id, ear->previous->id});
+        ear->active = false;
+        --vertexCount;
+        if (vertexCount < 3) break;
+        ear->previous->next = ear->next;
+        ear->next->previous = ear->previous;
+        update(ear->previous);
+        update(ear->next);
+    }
+    return vertexCount == 2;
 }
 
 double PolygonVolumeAndCentroidContribution(const SurfaceMesh::Pointer& mesh,
@@ -67,13 +314,25 @@ double PolygonVolumeAndCentroidContribution(const SurfaceMesh::Pointer& mesh,
                                             const Vector3d& referencePoint,
                                             bool orientation,
                                             Vector3d& centroidContribution) {
-    const Vector3d first = ToDoublePoint(mesh->GetPoint(pointIds[0]));
     double polygonVolume = 0.0;
     centroidContribution.setZero();
     const double orientationSign = orientation ? 1.0 : -1.0;
-    for (std::size_t index = 1; index + 1 < pointIds.size(); ++index) {
-        const Vector3d second = ToDoublePoint(mesh->GetPoint(pointIds[index]));
-        const Vector3d third = ToDoublePoint(mesh->GetPoint(pointIds[index + 1]));
+    std::vector<std::array<std::size_t, 3>> triangles;
+    if (pointIds.size() == 3) {
+        triangles.push_back({0, 1, 2});
+    } else if (pointIds.size() == 4 && !QuadUsesFirstDiagonal(mesh, pointIds)) {
+        triangles.push_back({0, 1, 3});
+        triangles.push_back({1, 2, 3});
+    } else if (pointIds.size() > 4) {
+        TriangulatePolygon(mesh, pointIds, triangles);
+    } else {
+        for (std::size_t index = 1; index + 1 < pointIds.size(); ++index)
+            triangles.push_back({0, index, index + 1});
+    }
+    for (const auto& triangle : triangles) {
+        const Vector3d first = ToDoublePoint(mesh->GetPoint(pointIds[triangle[0]]));
+        const Vector3d second = ToDoublePoint(mesh->GetPoint(pointIds[triangle[1]]));
+        const Vector3d third = ToDoublePoint(mesh->GetPoint(pointIds[triangle[2]]));
         const double tetrahedronVolume = orientationSign
                 * Determinant(first - referencePoint, second - referencePoint, third - referencePoint) / 6.0;
         polygonVolume += tetrahedronVolume;

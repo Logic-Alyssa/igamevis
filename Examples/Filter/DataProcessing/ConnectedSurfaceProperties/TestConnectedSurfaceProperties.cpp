@@ -213,6 +213,73 @@ bool RunPolyhedraCase() {
     return passed;
 }
 
+bool RunNonPlanarQuadCase() {
+    auto input = iGame::SurfaceMesh::New();
+    auto points = iGame::Points::New();
+    points->AddPoint(iGame::Point(-0.000672542f, 0.019087199f, -0.166466996f));
+    points->AddPoint(iGame::Point(-0.013616800f, 0.016878501f, -0.151962996f));
+    points->AddPoint(iGame::Point(0.354883999f, 0.017226500f, 0.340409011f));
+    points->AddPoint(iGame::Point(0.366243988f, 0.017344501f, 0.323711991f));
+    auto faces = iGame::CellArray::New();
+    const igIndex quad[4]{0, 1, 2, 3};
+    faces->AddCellIds(quad, 4);
+    input->SetPoints(points);
+    input->SetFaces(faces);
+
+    auto filter = iGame::ConnectedSurfacePropertiesFilter::New();
+    filter->SetInput(input);
+    if (!Check(filter->Execute(), std::string("non-planar quad execution: ") + filter->GetLastError()))
+        return false;
+
+    const auto areas = filter->GetAreas();
+    const auto volumes = filter->GetVolumes();
+    const auto centroids = filter->GetObjectCentroids();
+    return Check(!filter->GetAllValid(), "single non-planar quad is an open surface")
+            && Check(areas != nullptr && Close(areas->RawPointer()[0], 0.011728017340777696),
+                     "non-planar quad area matches ParaView")
+            && Check(volumes != nullptr && Close(volumes->RawPointer()[0], -3.559594693756579e-06),
+                     "non-planar quad uses ParaView's diagonal for volume contribution")
+            && Check(centroids != nullptr
+                            && Close(centroids->RawPointer(0)[0], 0.17484521233789665)
+                            && Close(centroids->RawPointer(0)[1], 0.01759939595526564)
+                            && Close(centroids->RawPointer(0)[2], 0.08404713634056422),
+                     "non-planar quad centroid matches ParaView");
+}
+
+bool RunConcavePolygonCase() {
+    auto input = iGame::SurfaceMesh::New();
+    auto points = iGame::Points::New();
+    points->AddPoint(iGame::Point(4.0f, 0.0f, -0.0677023f));
+    points->AddPoint(iGame::Point(3.5f, 0.866025f, -0.0568293f));
+    points->AddPoint(iGame::Point(2.775f, 0.389711f, 0.0104978f));
+    points->AddPoint(iGame::Point(2.0f, 1.22465e-16f, 0.118678f));
+    points->AddPoint(iGame::Point(2.5f, -0.866025f, 0.173661f));
+    points->AddPoint(iGame::Point(3.5f, -0.866025f, -0.025554f));
+    auto faces = iGame::CellArray::New();
+    const igIndex polygon[6]{0, 1, 2, 3, 4, 5};
+    faces->AddCellIds(polygon, 6);
+    input->SetPoints(points);
+    input->SetFaces(faces);
+
+    auto filter = iGame::ConnectedSurfacePropertiesFilter::New();
+    filter->SetInput(input);
+    if (!Check(filter->Execute(), std::string("concave polygon execution: ") + filter->GetLastError()))
+        return false;
+
+    const auto areas = filter->GetAreas();
+    const auto volumes = filter->GetVolumes();
+    const auto centroids = filter->GetObjectCentroids();
+    return Check(areas != nullptr && Close(areas->RawPointer()[0], 2.1382043063163794),
+                 "concave polygon area matches ParaView")
+            && Check(volumes != nullptr && Close(volumes->RawPointer()[0], -0.031863468059382796),
+                     "concave polygon ear cutting matches ParaView")
+            && Check(centroids != nullptr
+                            && Close(centroids->RawPointer(0)[0], 3.12628704101614)
+                            && Close(centroids->RawPointer(0)[1], -0.10247715252704519)
+                            && Close(centroids->RawPointer(0)[2], 0.019895010027776664),
+                     "concave polygon centroid matches ParaView");
+}
+
 iGame::SurfaceMesh::Pointer MakeTetraSurfaceWithIds() {
     auto mesh = iGame::SurfaceMesh::New();
     auto points = iGame::Points::New();
@@ -262,6 +329,8 @@ int main() {
     passed &= RunTwoBoxesCase();
     passed &= RunOpenPatchCase();
     passed &= RunPolyhedraCase();
+    passed &= RunNonPlanarQuadCase();
+    passed &= RunConcavePolygonCase();
     passed &= RunSuppliedIdsCase();
     passed &= RunUnsupportedCase();
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;

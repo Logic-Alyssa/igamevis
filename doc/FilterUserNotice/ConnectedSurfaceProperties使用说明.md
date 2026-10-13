@@ -68,7 +68,7 @@ filter->Execute();
 | `ConnectedSurfacePropertiesTwoBoxes.vtk` | 两个闭合盒体 | 2 个有效对象，总面积 16，总体积 3 |
 | `ConnectedSurfacePropertiesPolyhedra.vtk` | 三棱柱、方锥和八面体 | 3 个有效对象，总面积 `9+√5+4√10+4√3`，总体积 `19/3` |
 
-录屏使用 `ConnectedSurfacePropertiesPolyhedra.vtk`。其总面积约为 `30.813382`，总体积约为 `6.333333`；对比时应同时检查 `ObjectIds`、面积、体积、有效性和质心。
+仓库内的 `ConnectedSurfacePropertiesPolyhedra.vtk` 可用于快速检查基本结果：总面积约为 `30.813382`，总体积约为 `6.333333`。录制与 ParaView 的对比视频时，应改用面数较多、包含多个连通区或非平面多边形的复杂模型，并同时检查 `ObjectIds`、`Areas`、`Volumes`、`ObjectValidity`、`ObjectAreas`、`ObjectVolumes` 和 `ObjectCentroids`。
 
 自动测试文件：
 
@@ -84,7 +84,7 @@ Examples/testConnectedSurfaceProperties.exe
 testConnectedSurfacePropertiesWidget.exe
 ```
 
-测试内容包括连通对象识别、开放表面判定、逐面与逐对象结果、现有对象编号、独立输出、渲染数据转换，以及面板关闭和应用退出时的内存检查。测试程序不使用 `Tet_Plane.vtk`。
+测试内容包括连通对象识别、开放表面判定、逐面与逐对象结果、非平面四边形、凹多边形、现有对象编号、独立输出、渲染数据转换，以及面板关闭和应用退出时的内存检查。测试程序不使用 `Tet_Plane.vtk`。
 
 ## 5. 支持范围
 
@@ -97,7 +97,7 @@ testConnectedSurfacePropertiesWidget.exe
 1. 开放边、非流形边或无法统一面方向的对象会被标记为无效。
 2. `TotalVolume` 只累计有效对象；无效对象仍输出面积和逐面的有符号体积贡献。
 3. 零体积或开放平面对象的质心按 ParaView 行为输出为 `NaN`。
-4. 输入面应是按边界顺序排列的简单平面多边形；自相交面、严重非平面面和退化面不保证得到有效结果。
+4. 输入面的顶点应按边界顺序排列。Filter 会按 ParaView 的规则处理三角形、四边形和一般多边形，包括轻度非平面四边形及凹多边形；自相交面和退化面不保证得到有效结果。
 5. 自动识别会在计算过程中统一相邻面的方向，但不会修改输出几何中的点顺序。
 6. 跳过识别模式默认信任给定对象编号，并假定各对象闭合、流形且面方向一致。
 7. Legacy VTK 测试模型使用统一三角面或统一四边形面，以兼容当前 iGame 表面读取和显示流程。
