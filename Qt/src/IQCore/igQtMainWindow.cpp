@@ -1844,6 +1844,7 @@ void igQtMainWindow::initAllFilters() {
         {"append_attributes", "附加属性", StandardFilterCategory::DataAttributes, false},
         {"append_datasets", "附加数据集", StandardFilterCategory::Composite, false},
         {"append_location_attributes", "附加位置属性", StandardFilterCategory::DataAttributes, false},
+        {"append_reduce", "网格合并去重", StandardFilterCategory::Composite, false},
         {"axis_aligned_reflection", "轴对齐反射", StandardFilterCategory::Transform, false},
         {"axis_aligned_transform", "轴对齐变换", StandardFilterCategory::Transform, false},
         {"boundary_mesh_quality", "边界网格质量", StandardFilterCategory::MeshQuality, false},
@@ -5781,7 +5782,9 @@ void igQtMainWindow::initAllFilters() {
                                                     : QString::fromStdString(message));
                 return;
             }
-            refreshFilterResult(input, filter->GetOutput(), title);
+            auto output=filter->GetOutput();
+            output->SetName(input->GetName() + "_revolution");
+            refreshFilterResult(input, output, title);
             dialog->close();
         });
     });
