@@ -208,6 +208,7 @@ set(IGAME_BATCH2_EXAMPLES
     testTriangleStripWidget
     testBatch2GeometryValidation
     testStandardFiltersMenu
+    testTextureMapToPlane
 )
 set(IGAME_BATCH2_VISUAL_EXAMPLES
     testCountCellVertices
@@ -575,8 +576,15 @@ igame_add_example(testIsoVolume Filter/TestIsoVolume.cpp)
 igame_add_example(testDeformation Filter/Deformation/TestStressDeformationFilter.cpp)
 igame_add_example(testDeformationCode Filter/Deformation/TestStressDeformationFilterCode.cpp)
 igame_add_example(testContourLine Filter/TestContourLine.cpp)
+igame_add_example(testMultiBlockGeometry Filter/TestMultiBlockGeometry.cpp)
+igame_add_example(testCellMeshMetrics Filter/TestCellMeshMetrics.cpp)
+igame_add_example(testGhostDemo Filter/GhostCell/TestGhostDemo.cpp)
+igame_add_example(testGroupDatasets Filter/TestGroupDatasets.cpp)
 # Modeling：线性拉伸（Linear Extrusion）
 igame_add_example(testLinearExtrusion Filter/TestLinearExtrusion.cpp)
+# 表面切向量 (Generate Surface Tangents)
+igame_add_example(testGenerateSurfaceTangents Filter/GenerateSurfaceTangents/TestGenerateSurfaceTangents.cpp)
+igame_add_example(testMedianFilter Filter/Median/TestMedianFilter.cpp)
 
 # ������ #5 + �е����� #28 ���ײ�������
 igame_add_example(testGhostCellModel Filter/GhostCell/TestGhostCellModel.cpp)
@@ -584,6 +592,7 @@ igame_add_example(testPlaneSamplingFilter Filter/TestPlaneSampling.cpp)
 igame_add_example(testExtractEnclosedPoints Filter/TestExtractEnclosedPoints.cpp)
 
 igame_add_example(TestTubeFilter Filter/Tube/TestTubeFilter.cpp)
+igame_add_example(TestSubdivideFilter Filter/Subdivide/TestSubdivideFilter.cpp)
 #        #5 +  е      #28    ײ       
 igame_add_example(testContourExtraction Filter/TestContourExtraction.cpp)
 igame_add_example(testModelGeometryParallelValidation Filter/ModelGeometryParallelValidation.cpp)
@@ -681,6 +690,7 @@ igame_add_example(testWarpByScalar Filter/WarpByScalar/TestWarpByScalar.cpp)
 igame_add_example(testPointCoordinates Filter/PointCoordinates/TestPointCoordinates.cpp)
 igame_add_example(testCellCenterFilter Filter/CellCenter/TestCellCenterFilter.cpp)
 igame_add_example(testExtractCellsByType Filter/MyFilter/TestExtractCellsByType.cpp)
+igame_add_example(TestValidateCellsFilter Filter/MyFilter/TestValidateCellsFilter.cpp)
 igame_add_example(testRandomVectors Filter/AttributeManipulation/TestRandomVectors.cpp)
 igame_add_example(testRemoveGhostInformation Filter/RemoveGhostInformation/TestRemoveGhostInformation.cpp)
 igame_add_example(testMaskPoints Filter/MaskPoints/TestMaskPoints.cpp)
@@ -694,6 +704,7 @@ igame_add_example(testExtractSubset Filter/TestExtractSubset.cpp)
 # Extract Location and Overlapping Cells Detector regression examples.
 igame_add_example(testExtractLocation Filter/DataProcessing/ExtractLocation/TestExtractLocation.cpp)
 igame_add_example(testOverlappingCellsDetector Filter/DataProcessing/OverlappingCellsDetector/TestOverlappingCellsDetector.cpp)
+igame_add_example(testTextureMapToPlane Filter/DataProcessing/TextureMapToPlane/TestTextureMapToPlane.cpp)
 
 igame_add_example(testExtractLocationDrag Filter/DataProcessing/ExtractLocation/TestExtractLocationDrag.cpp)
 
@@ -706,6 +717,13 @@ igame_add_example(testAppendAttributes Filter/AppendAttributes/TestAppendAttribu
 # ReverseSense
 igame_add_example(testReverseSense Filter/ReverseSense/TestReverseSense.cpp)
 igame_add_example(testReverseSenseSelfCheck Filter/ReverseSense/TestReverseSenseSelfCheck.cpp)
+# Cylinder texture mapping
+igame_add_example(testTextureMapToCylinder Filter/TestTextureMapToCylinder.cpp)
+
+# PerlinNoise: samples 3D Perlin noise at every input point into a point scalar array.
+igame_add_example(testPerlinNoise Filter/AttributeManipulation/TestPerlinNoise.cpp)
+
+igame_add_example(testTextureMapToSphere Filter/TextureMapToSphere/TestTextureMapToSphere.cpp)
 
 # YieldCriteria: principal stress / Tresca / von Mises from a 6- or 9-component tensor array.
 igame_add_example(testYieldCriteria Filter/Tensor/TestYieldCriteria.cpp)
