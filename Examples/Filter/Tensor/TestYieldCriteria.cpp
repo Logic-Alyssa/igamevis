@@ -430,6 +430,143 @@ int main() {
         }
     }
 
+    /* ---- 9) 面板可多选：一次对多个张量属性计算 ----
+     * 背景：屈服准则面板原先只有一个单选下拉框（张量属性），一次只能算一个张量。实际工程
+     *       模型（例如 d3plot 导出的 vtu）常常同时带多个 6 分量应力张量（实体单元 + 壳单元
+     *       各积分点），用户需要反复执行多次。
+     * 触发条件：模型里存在 ≥2 个 6/9 分量张量属性，且希望一次算出全部结果。
+     * 正确行为：SetTensorArrayNames 接受多个名字，逐个计算并以各自的张量名为前缀追加
+     *       结果数组；多选结果必须与"逐个单独执行"完全一致；同名去重；名字不存在时整次
+     *       执行失败且不产生输出；输入模型不被修改。
+     * 修复提交：待提交（提交主题 feat(yield_criteria): 屈服准则面板支持多选张量属性）。
+     */
+    {
+        auto mesh = FileIO::ReadFile("./Models/YieldCriteria_Test.vtk");
+        auto loaded = DynamicCast<PointSet>(mesh);
+        auto attrSet = mesh ? mesh->GetAttributeSet() : nullptr;
+        const int t1 = attrSet ? attrSet->GetAttributeIndex("Stress") : -1;
+        const int t2 = attrSet ? attrSet->GetAttributeIndex("Stress2") : -1;
+        Check(t1 >= 0 && t2 >= 0, "multi-select: test model carries two tensors (Stress / Stress2)");
+
+        if (loaded && t1 >= 0 && t2 >= 0) {
+            // 一次选择两个张量
+            auto filter = YieldCriteriaFilter::New();
+            filter->SetTensorArrayNames({"Stress", "Stress2"});
+            filter->SetCriterion(YieldCriteriaFilter::VON_MISES);
+            filter->SetInput(mesh);
+            const bool ok = filter->Execute();
+            auto out = filter->GetOutput();
+            auto outSet = out ? out->GetAttributeSet() : nullptr;
+            Check(ok && outSet && outSet->GetAttributeIndex("Stress - Von Mises Criterion") >= 0 &&
+                          outSet->GetAttributeIndex("Stress2 - Von Mises Criterion") >= 0,
+                  "multi-select: both tensors produce their own result arrays");
+
+            // 与"单独计算"结果一致
+            auto single1 = YieldCriteriaFilter::New();
+            single1->SetTensorArrayName("Stress");
+            single1->SetCriterion(YieldCriteriaFilter::VON_MISES);
+            single1->SetInput(mesh);
+            single1->Execute();
+            double a[1331] = {0};
+            double b[1331] = {0};
+            const bool sameAsSingle =
+                    FetchScalar(out, "Stress - Von Mises Criterion", a, 1331) &&
+                    FetchScalar(single1->GetOutput(), "Stress - Von Mises Criterion", b, 1331) &&
+                    MaxError(a, b, 1331) < 1e-12;
+            Check(sameAsSingle, "multi-select: results equal the per-tensor single run");
+
+            auto outPs = DynamicCast<PointSet>(out);
+            Check(outPs && outPs->GetNumberOfPoints() == 1331,
+                  "multi-select: geometry unchanged (same point count)");
+            Check(mesh->GetAttributeSet()->GetAttributeIndex("Stress - Von Mises Criterion") < 0,
+                  "multi-select: input model is not modified");
+
+            // 名字不存在 -> 整次失败并给出原因
+            auto bad = YieldCriteriaFilter::New();
+            bad->SetTensorArrayNames({"Stress", "NotExist"});
+            bad->SetInput(mesh);
+            Check(!bad->Execute() && bad->GetStatusMessage().find("NotExist") != std::string::npos,
+                  "multi-select: unknown tensor name is rejected with a message");
+
+            // 主应力：每个张量各自输出主值与方向矢量
+            auto principal = YieldCriteriaFilter::New();
+            principal->SetTensorArrayNames({"Stress", "Stress2"});
+            principal->SetCriterion(YieldCriteriaFilter::PRINCIPAL_STRESS);
+            principal->SetInput(mesh);
+            const bool okP = principal->Execute();
+            auto pSet = principal->GetOutput() ? principal->GetOutput()->GetAttributeSet() : nullptr;
+            Check(okP && pSet && pSet->GetAttributeIndex("Stress - Sigma 1") >= 0 &&
+                          pSet->GetAttributeIndex("Stress2 - Sigma 3 (Vector)") >= 0,
+                  "multi-select: principal stress emits arrays for each selected tensor");
+
+            // 同名去重：结果数组只应出现一次
+            auto dup = YieldCriteriaFilter::New();
+            dup->SetTensorArrayNames({"Stress", "Stress"});
+            dup->SetCriterion(YieldCriteriaFilter::TRESCA);
+            dup->SetInput(mesh);
+            const bool okDup = dup->Execute();
+            auto dSet = dup->GetOutput() ? dup->GetOutput()->GetAttributeSet() : nullptr;
+            int trescaCount = 0;
+            if (dSet) {
+                for (size_t i = 0; i < dSet->GetNumberOfAttributes(); ++i) {
+                    auto& at = dSet->GetAttribute(static_cast<IGsize>(i));
+                    if (at.isDeleted || at.pointer == nullptr) continue;
+                    if (at.pointer->GetName() == "Stress - Tresca Criterion") { ++trescaCount; }
+                }
+            }
+            Check(okDup && trescaCount == 1, "multi-select: duplicate names are de-duplicated");
+        }
+    }
+
+    /* ---- 10) 多准则同时计算（面板可多选） ----
+     * 背景：屈服准则面板原先只有一个单选下拉框，一次只能算一个准则；用户希望与张量一致，
+     *       支持多选，一次执行同时得到主应力 / Tresca / von Mises 的结果。
+     * 触发条件：需要同时对比多个屈服准则时。
+     * 正确行为：SetCriteria 接受多个准则，对每个（张量 × 准则）组合各输出一组结果数组；
+     *       结果必须与逐个单独执行一致；空准则列表按主应力处理（getter 也应反映）。
+     * 修复提交：待提交（提交主题 feat(yield_criteria): 屈服准则支持多选）。
+     */
+    {
+        auto ps = MakeTensorPointSet("Stress", 6);
+        auto multi = YieldCriteriaFilter::New();
+        multi->SetCriteria({YieldCriteriaFilter::PRINCIPAL_STRESS,
+                            YieldCriteriaFilter::TRESCA,
+                            YieldCriteriaFilter::VON_MISES});
+        multi->SetInput(ps);
+        const bool ok = multi->Execute();
+        auto out = multi->GetOutput();
+        auto attrSet = out ? out->GetAttributeSet() : nullptr;
+        Check(ok && attrSet && attrSet->GetAttributeIndex("Stress - Sigma 1") >= 0 &&
+                      attrSet->GetAttributeIndex("Stress - Tresca Criterion") >= 0 &&
+                      attrSet->GetAttributeIndex("Stress - Von Mises Criterion") >= 0,
+              "multi-criteria: one run produces all three criteria results");
+
+        // 与逐个单独执行一致
+        double m1[6] = {0};
+        double m2[6] = {0};
+        auto single = YieldCriteriaFilter::New();
+        single->SetCriterion(YieldCriteriaFilter::TRESCA);
+        single->SetInput(ps);
+        single->Execute();
+        const bool same =
+                FetchScalar(out, "Stress - Tresca Criterion", m1, kNumTensors) &&
+                FetchScalar(single->GetOutput(), "Stress - Tresca Criterion", m2, kNumTensors) &&
+                MaxError(m1, m2, kNumTensors) < 1e-12;
+        Check(same, "multi-criteria: results equal the per-criterion single run");
+
+        // 空准则列表按主应力处理
+        auto empty = YieldCriteriaFilter::New();
+        empty->SetCriteria({});
+        empty->SetInput(ps);
+        const bool okEmpty = empty->Execute();
+        auto eSet = empty->GetOutput() ? empty->GetOutput()->GetAttributeSet() : nullptr;
+        Check(okEmpty && eSet && eSet->GetAttributeIndex("Stress - Sigma 1") >= 0,
+              "multi-criteria: empty criterion list falls back to principal stress");
+        Check(empty->GetCriteria().size() == 1 &&
+                      empty->GetCriterion() == YieldCriteriaFilter::PRINCIPAL_STRESS,
+              "multi-criteria: getters reflect the fallback");
+    }
+
     if (g_failed == 0) {
         std::cout << "\nResult: PASS\n";
         return 0;

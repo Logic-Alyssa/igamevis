@@ -7,8 +7,9 @@
  *            - Tresca 准则：σ1 - σ3
  *            - von Mises 准则：sqrt(0.5 * ((σ1-σ2)² + (σ2-σ3)² + (σ3-σ1)²))
  *
- *          输入张量属性为 6 分量对称张量（顺序 xx, yy, zz, xy, yz, zx）或 9 分量
- *          完整张量；输出为输入网格的深拷贝，几何与拓扑不变，仅追加结果数组。
+ *          支持一次选择多个张量属性，逐个计算并把结果数组追加到输出上（数组名以各自的
+ *          张量名为前缀）；张量属性为 6 分量对称张量（xx, yy, zz, xy, yz, zx）或 9 分量
+ *          完整张量。输出为输入网格的深拷贝，几何与拓扑不变。
  */
 
 #pragma once
@@ -17,6 +18,7 @@
 #include "iGameDataObject.h"
 
 #include <string>
+#include <vector>
 
 IGAME_NAMESPACE_BEGIN
 
@@ -34,22 +36,33 @@ public:
 
     bool Execute() override;
 
-    /// 参与计算的张量属性名；留空则自动取第一个 6/9 分量张量属性
+    /// 参与计算的张量属性名（可多个，点数据与单元数据可混合）；为空则自动取一个
+    void SetTensorArrayNames(const std::vector<std::string>& names);
+    const std::vector<std::string>& GetTensorArrayNames() const;
+
+    /// 便捷接口：只设置一个张量属性（等价于 SetTensorArrayNames({name})）
     void SetTensorArrayName(const std::string& name);
-    const std::string& GetTensorArrayName() const;
+    /// 返回第一个张量属性名（未设置时为空串）
+    std::string GetTensorArrayName() const;
 
+    /// 参与计算的屈服准则（可多个，会逐个输出各自的结果数组）；为空则按主应力处理
+    void SetCriteria(const std::vector<Criterion>& criteria);
+    const std::vector<Criterion>& GetCriteria() const;
+
+    /// 便捷接口：只设置一个准则（等价于 SetCriteria({criterion})）
     void SetCriterion(Criterion criterion);
-    Criterion GetCriterion() const;
+    /// 返回第一个准则（默认主应力）。m_Criteria 恒非空，故可安全返回引用。
+    const Criterion& GetCriterion() const;
 
-    /// 上一次执行的说明（失败原因 / 实际使用的张量属性）
+    /// 上一次执行的说明（失败原因 / 实际处理的张量属性与准则）
     const std::string& GetStatusMessage() const;
 
 protected:
     YieldCriteriaFilter();
     ~YieldCriteriaFilter() override = default;
 
-    std::string m_TensorArrayName;
-    Criterion m_Criterion{PRINCIPAL_STRESS};
+    std::vector<std::string> m_TensorArrayNames;
+    std::vector<Criterion> m_Criteria{PRINCIPAL_STRESS};
     std::string m_StatusMessage;
 };
 
