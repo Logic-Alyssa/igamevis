@@ -6599,6 +6599,14 @@ void igQtMainWindow::initAllFilters() {
         if (!connectedSurfacePropertiesWidget) {
             connectedSurfacePropertiesWidget = new igQtConnectedSurfacePropertiesWidget(
                     rendererWidget, modelTreeWidget, model, this);
+            connectedSurfacePropertiesWidget->setOutputReadyCallback(
+                    [this](iGame::DataObject* output) {
+                        if (!output) return;
+                        ui->widget_SearchInfo->setCurrentModelData(output);
+                        ui->widget_SearchInfo->setCurrentDataType(2);
+                        ui->dockWidget_SearchInfo->show();
+                        ui->dockWidget_SearchInfo->raise();
+                    });
         } else {
             connectedSurfacePropertiesWidget->setSourceModel(model);
         }

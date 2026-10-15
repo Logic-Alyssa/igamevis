@@ -7,10 +7,12 @@
 
 #include <QDialog>
 
+#include <functional>
+#include <utility>
+
 class QCheckBox;
 class QLabel;
 class QLineEdit;
-class QTableWidget;
 class igQtModelDialogWidget;
 class igQtModelDrawWidget;
 
@@ -23,6 +25,9 @@ public:
 
     bool isReady() const { return !m_InputMesh.IsNull(); }
     bool setSourceModel(iGame::Model::Pointer sourceModel);
+    void setOutputReadyCallback(std::function<void(iGame::DataObject*)> callback) {
+        m_OutputReadyCallback = std::move(callback);
+    }
 
 private:
     void buildUi();
@@ -42,6 +47,5 @@ private:
     QLabel* m_TotalAreaLabel{nullptr};
     QLabel* m_TotalVolumeLabel{nullptr};
     QLabel* m_StatusLabel{nullptr};
-    QTableWidget* m_ArrayTable{nullptr};
-    QTableWidget* m_ObjectTable{nullptr};
+    std::function<void(iGame::DataObject*)> m_OutputReadyCallback{};
 };
