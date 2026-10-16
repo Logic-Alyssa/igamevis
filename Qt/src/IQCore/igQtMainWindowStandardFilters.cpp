@@ -257,6 +257,7 @@ bool igQtMainWindow::connectImportedFilterAction(QAction* action, const QString&
                                       "体网格、结构网格或点集请先提取表面。"));
                 return;
             }
+            panel->show();
         }
         showFilterPanel(this, id);
     });
