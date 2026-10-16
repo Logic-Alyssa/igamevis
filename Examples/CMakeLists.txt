@@ -654,6 +654,7 @@ igame_add_example(testResampleToImage Filter/Convert/TestResampleToImage.cpp)
 igame_add_example(testResampleToLine Filter/TestResampleToLine.cpp)
 igame_add_example(testTriangleStrip Filter/TriangleStrip/TestTriangleStrip.cpp)
 igame_add_example(testResampleImageChecks Filter/Convert/TestResampleImageChecks.cpp)
+igame_add_example(testIntegrateVariables Filter/FeatureExtraction/IntegrateVariables.cpp)
 if (ENABLE_QT_MODULE)
     igame_add_example(testThirdBatchMenu Filter/ThirdBatchMenuValidation.cpp)
     target_link_libraries(testThirdBatchMenu PRIVATE Qt_module)
@@ -723,13 +724,21 @@ igame_add_example(testExtractLocationDrag Filter/DataProcessing/ExtractLocation/
 
 # Force Static Mesh: cached geometry (pinned to the frame that built the cache) + attribute updates.
 igame_add_example(testForceStaticMesh Filter/ForceStaticMesh/TestForceStaticMesh.cpp)
+# 无窗口的数值/逻辑一致性回归检查（失败时返回非 0，可直接进 CI）
+igame_add_example(testHistogramChecks Filter/Histogram/TestHistogramChecks.cpp)
+igame_add_example(testAppendArcLengthChecks Filter/AppendArcLength/TestAppendArcLengthChecks.cpp)
 
 # Append Attributes: merges point/cell attribute arrays from several inputs sharing the same layout.
 igame_add_example(testAppendAttributes Filter/AppendAttributes/TestAppendAttributes.cpp)
 
+# Connectivity
+igame_add_example(testConnectivity Filter/Connectivity/TestConnectivity.cpp)
+igame_add_example(testConnectivitySelfCheck Filter/Connectivity/TestConnectivitySelfCheck.cpp)
 # ReverseSense
 igame_add_example(testReverseSense Filter/ReverseSense/TestReverseSense.cpp)
 igame_add_example(testReverseSenseSelfCheck Filter/ReverseSense/TestReverseSenseSelfCheck.cpp)
+# Tensor principal invariants
+igame_add_example(testTensorPrincipalInvariants Filter/TestTensorPrincipalInvariants.cpp)
 # Cylinder texture mapping
 igame_add_example(testTextureMapToCylinder Filter/TestTextureMapToCylinder.cpp)
 
