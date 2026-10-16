@@ -91,7 +91,6 @@
 #include <IQWidgets/igQtAiChat/igQtAiChatWidget.h>
 #include <IQWidgets/igQtAiChat/igQtCommandManager.h>
 #include <IQWidgets/igQtCharts.h>
-#include <IQWidgets/igQtConnectedSurfacePropertiesWidget.h>
 #include <IQWidgets/igQtDeformationWidget.h>
 #include <IQWidgets/igQtElevationFilterPanel.h>
 #include <SurfaceNormals/iGameSurfaceNormalsFilter.h>
@@ -7111,52 +7110,6 @@ void igQtMainWindow::initAllFilters() {
         dialog->show();
     });
 
-    QAction* connectedSurfacePropertiesAction = developingFiltersBatch2->addAction(
-            QStringLiteral("计算连通表面属性 (Connected Surface Properties)"));
-    connectedSurfacePropertiesAction->setObjectName(
-            QStringLiteral("action_developing_connected_surface_properties"));
-    QPointer<igQtConnectedSurfacePropertiesWidget> connectedSurfacePropertiesWidget;
-    connect(connectedSurfacePropertiesAction, &QAction::triggered, this,
-            [this, connectedSurfacePropertiesWidget]() mutable {
-        auto* scene = rendererWidget->GetScene();
-        auto model = scene == nullptr ? nullptr : scene->GetCurrentModel();
-        if (!model) {
-            showDarkFramelessMessage(QStringLiteral("计算连通表面属性"),
-                                     QStringLiteral("请先在模型树中选择一个多边形表面网格。"));
-            return;
-        }
-        if (iGame::DynamicCast<iGame::SurfaceMesh>(model->GetDataObject()).IsNull()) {
-            showDarkFramelessMessage(
-                    QStringLiteral("计算连通表面属性"),
-                    QStringLiteral("当前仅支持 SurfaceMesh（对应 ParaView PolyData 的多边形表面）。"
-                                   "体网格、结构网格或点集请先提取表面。"));
-            return;
-        }
-        if (!connectedSurfacePropertiesWidget) {
-            connectedSurfacePropertiesWidget = new igQtConnectedSurfacePropertiesWidget(
-                    rendererWidget, modelTreeWidget, model, this);
-            connectedSurfacePropertiesWidget->setOutputReadyCallback(
-                    [this](iGame::DataObject* output) {
-                        if (!output) return;
-                        ui->widget_SearchInfo->setCurrentModelData(output);
-                        ui->widget_SearchInfo->setCurrentDataType(2);
-                        ui->dockWidget_SearchInfo->show();
-                        ui->dockWidget_SearchInfo->raise();
-                    });
-        } else {
-            connectedSurfacePropertiesWidget->setSourceModel(model);
-        }
-        if (!connectedSurfacePropertiesWidget->isReady()) {
-            showDarkFramelessMessage(
-                    QStringLiteral("计算连通表面属性"),
-                    QStringLiteral("当前仅支持 SurfaceMesh（对应 ParaView PolyData 的多边形表面）。"
-                                   "体网格、结构网格或点集请先提取表面。"));
-            return;
-        }
-        connectedSurfacePropertiesWidget->show();
-        connectedSurfacePropertiesWidget->raise();
-        connectedSurfacePropertiesWidget->activateWindow();
-    });
 }
 
 void igQtMainWindow::initAllDockWidgetConnectWithAction() {

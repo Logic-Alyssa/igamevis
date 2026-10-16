@@ -111,11 +111,6 @@ int main(int argc, char** argv) {
         execute->click();
         app.processEvents();
 
-        // 回归场景：Connected Surface Properties 的对象级结果此前只能在 Filter 弹窗中查看，
-        // 关闭弹窗后无法使用项目统一的 SearchInfo 表格查询。执行后应自动打开“查找数据”，
-        // 对象数据应完整显示有效性、面积、体积和质心；切回单元数据时，输入自带 FaceValue
-        // 与新增的 ObjectIds、Areas、Volumes 必须同时存在。
-        // 修复提交：待提交（主题：fix: 在查找数据中展示连通表面属性）。
         auto* searchDock = owner.findChild<QDockWidget*>(QStringLiteral("dockWidget_SearchInfo"));
         auto* searchWidget = owner.findChild<igQtSearchInfoWidget*>();
         auto* objectData = searchWidget
