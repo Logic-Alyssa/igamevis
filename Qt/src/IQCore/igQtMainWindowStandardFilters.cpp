@@ -16,6 +16,7 @@
 #include <IQWidgets/igQtResampleWithDataSetWidget.h>
 #include <IQWidgets/igQtRenameArraysWidget.h>
 #include <IQWidgets/igQtTextureMapToCylinderWidget.h>
+#include <IQWidgets/igQtTensorPrincipalInvariantsWidget.h>
 #include <IQWidgets/igQtTriangleStripWidget.h>
 #include <CellSize/iGameCellSizeFilter.h>
 #include <iGameScene.h>
@@ -68,7 +69,7 @@ bool igQtMainWindow::connectImportedFilterAction(QAction* action, const QString&
         "axis_aligned_reflection", "extract_component", "merge_vector_components",
         "rename_arrays", "resample_to_image", "resample_to_line",
         "resample_with_dataset", "triangle_strips", "texture_map_to_cylinder",
-        "compute_connected_surface_properties"};
+        "tensor_principal_invariants", "compute_connected_surface_properties"};
     if (!ids.contains(filterId)) return false;
 
     if (filterId == QStringLiteral("compute_connected_surface_properties")) {
@@ -146,6 +147,12 @@ bool igQtMainWindow::connectImportedFilterAction(QAction* action, const QString&
                 connect(p, &igQtGenerateProcessIdsWidget::DrawProcessIdsModel, this, displayResult);
                 connect(p, &igQtGenerateProcessIdsWidget::UpdateProcessIdsModel, this, displayResult);
                 connect(p, &igQtGenerateProcessIdsWidget::ApplyFailed, this, failed);
+            });
+            panel->SetOriginDataObject(input);
+        } else if (id == "tensor_principal_invariants") {
+            auto* panel = filterPanel<igQtTensorPrincipalInvariantsWidget>(this, id, title, [&](auto* p, auto*) {
+                connect(p, &igQtTensorPrincipalInvariantsWidget::DrawResultModel, this, displayResult);
+                connect(p, &igQtTensorPrincipalInvariantsWidget::UpdateResultModel, this, displayResult);
             });
             panel->SetOriginDataObject(input);
         } else if (id == "merge_vector_components") {
