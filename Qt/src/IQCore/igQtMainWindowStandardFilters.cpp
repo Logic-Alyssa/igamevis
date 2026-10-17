@@ -246,18 +246,20 @@ bool igQtMainWindow::connectImportedFilterAction(QAction* action, const QString&
                                       "体网格、结构网格或点集请先提取表面。"));
                 return;
             }
-            auto* panel = filterPanel<igQtConnectedSurfacePropertiesWidget>(
-                    this, id, title,
-                    [this](auto* p, auto*) {
-                        p->setOutputReadyCallback([this](DataObject* output) {
-                            if (!output) return;
-                            ui->widget_SearchInfo->setCurrentModelData(output);
-                            ui->widget_SearchInfo->setCurrentDataType(2);
-                            ui->dockWidget_SearchInfo->show();
-                            ui->dockWidget_SearchInfo->raise();
-                        });
-                    },
-                    rendererWidget, modelTreeWidget, model);
+            auto* panel = findChild<igQtConnectedSurfacePropertiesWidget*>(
+                    QStringLiteral("ConnectedSurfacePropertiesWidget"),
+                    Qt::FindDirectChildrenOnly);
+            if (!panel) {
+                panel = new igQtConnectedSurfacePropertiesWidget(
+                        rendererWidget, modelTreeWidget, model, this);
+                panel->setOutputReadyCallback([this](DataObject* output) {
+                    ui->widget_SearchInfo->setCurrentModelData(output);
+                    if (!output) return;
+                    ui->widget_SearchInfo->setCurrentDataType(2);
+                    ui->dockWidget_SearchInfo->show();
+                    ui->dockWidget_SearchInfo->raise();
+                });
+            }
             panel->setSourceModel(model);
             if (!panel->isReady()) {
                 failed(QStringLiteral("当前仅支持 SurfaceMesh（对应 ParaView PolyData 的多边形表面）。"
@@ -265,6 +267,9 @@ bool igQtMainWindow::connectImportedFilterAction(QAction* action, const QString&
                 return;
             }
             panel->show();
+            panel->raise();
+            panel->activateWindow();
+            return;
         }
         showFilterPanel(this, id);
     });

@@ -1,7 +1,11 @@
 #include <IQCore/igQtMainWindow.h>
+#include <IQComponents/igQtModelDialogWidget.h>
 #include <IQWidgets/igQtConnectedSurfacePropertiesWidget.h>
 #include <IQWidgets/igQtModelDrawWidget.h>
 #include <IQWidgets/igQtSearchInfoWidget.h>
+
+#include <iGameDrawObject.h>
+#include <iGameSceneManager.h>
 
 #include <QAction>
 #include <QApplication>
@@ -88,6 +92,10 @@ int main(int argc, char** argv) {
                         QStringLiteral("./Models/ConnectedSurfacePropertiesTwoBoxes.vtk")});
         ProcessEventsFor(1500);
         CheckHeap("input model loaded");
+        auto* scene = iGame::SceneManager::Instance()->GetCurrentScene();
+        auto sourceModel = scene ? scene->GetCurrentModel() : nullptr;
+        Check(sourceModel != nullptr, "missing source model");
+        auto sourceData = sourceModel->GetDataObject();
 
         QAction* filterAction = nullptr;
         for (auto* action : owner.findChildren<QAction*>()) {
@@ -103,6 +111,11 @@ int main(int argc, char** argv) {
                 owner.findChild<QDialog*>(QStringLiteral("ConnectedSurfacePropertiesWidget")));
         Check(panel != nullptr && panel->isReady() && panel->isVisible(),
               "filter panel did not open with the selected SurfaceMesh");
+        Check(panel->isWindow() && panel->size() == QSize(600, 300),
+              "filter panel must remain a compact standalone window");
+        Check(owner.findChild<QDockWidget*>(
+                      QStringLiteral("standardFilterPanel_compute_connected_surface_properties")) == nullptr,
+              "filter panel must not be stretched inside a dock widget");
         CheckHeap("filter panel opened");
         auto* execute = FindExecuteButton(panel);
         Check(execute != nullptr, "missing execute button");
@@ -141,6 +154,24 @@ int main(int argc, char** argv) {
                       HasColumn(resultTable, QStringLiteral("Areas")) &&
                       HasColumn(resultTable, QStringLiteral("Volumes")),
               "cell data table is missing computed properties");
+        auto* modelTree = owner.findChild<igQtModelDialogWidget*>();
+        auto outputModel = scene->GetCurrentModel();
+        auto outputData = outputModel ? outputModel->GetDataObject() : nullptr;
+        Check(modelTree && outputData && outputData != sourceData,
+              "filter output was not added as an independent model");
+        Check(!sourceModel->GetVisibility(),
+              "source model should be hidden while its output is displayed");
+        auto* outputItem = modelTree->getItemFromObject(outputData);
+        Check(outputItem != nullptr, "missing output item in model tree");
+        modelTree->setCurrentItem(outputItem);
+        modelTree->deleteCurrentModel();
+        app.processEvents();
+        auto sourceDraw = iGame::DynamicCast<iGame::DrawObject>(sourceData);
+        Check(modelTree->getItemFromObject(outputData) == nullptr,
+              "output item was not deleted from the model tree");
+        Check(sourceModel->GetVisibility() && sourceDraw && sourceDraw->GetVisibility(),
+              "deleting the output must restore the source model visibility");
+        CheckHeap("output deleted and source restored");
         CheckHeap("first execution completed");
         panel->close();
         app.processEvents();

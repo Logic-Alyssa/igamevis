@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <utility>
+#include <vector>
 
 class QCheckBox;
 class QLabel;
@@ -22,6 +23,7 @@ public:
                                                    igQtModelDialogWidget* modelTreeWidget,
                                                    iGame::Model::Pointer sourceModel,
                                                    QWidget* parent = nullptr);
+    ~igQtConnectedSurfacePropertiesWidget() override;
 
     bool isReady() const { return !m_InputMesh.IsNull(); }
     bool setSourceModel(iGame::Model::Pointer sourceModel);
@@ -30,8 +32,16 @@ public:
     }
 
 private:
+    struct OutputBinding {
+        iGame::SurfaceMesh::Pointer output{};
+        iGame::Model::Pointer source{};
+        unsigned long observerTag{0};
+    };
+
     void buildUi();
     void executeFilter();
+    void detachOutputObservers();
+    void handleOutputDeleted(iGame::SurfaceMesh* output);
     void showMessage(const QString& text, bool information = false);
 
     igQtModelDrawWidget* m_RendererWidget{nullptr};
@@ -48,4 +58,5 @@ private:
     QLabel* m_TotalVolumeLabel{nullptr};
     QLabel* m_StatusLabel{nullptr};
     std::function<void(iGame::DataObject*)> m_OutputReadyCallback{};
+    std::vector<OutputBinding> m_OutputBindings{};
 };

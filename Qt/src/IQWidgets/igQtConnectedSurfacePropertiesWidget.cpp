@@ -14,6 +14,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 
 using namespace iGame;
@@ -36,11 +37,15 @@ igQtConnectedSurfacePropertiesWidget::igQtConnectedSurfacePropertiesWidget(
     setObjectName(QStringLiteral("ConnectedSurfacePropertiesWidget"));
     setWindowTitle(QStringLiteral("计算连通表面属性"));
     setMinimumWidth(520);
-    resize(600, 300);
 
     setSourceModel(sourceModel);
     if (!m_RendererWidget || !m_ModelTreeWidget || m_InputMesh.IsNull()) return;
     buildUi();
+    setFixedSize(600, 300);
+}
+
+igQtConnectedSurfacePropertiesWidget::~igQtConnectedSurfacePropertiesWidget() {
+    detachOutputObservers();
 }
 
 bool igQtConnectedSurfacePropertiesWidget::setSourceModel(Model::Pointer sourceModel) {
@@ -48,7 +53,6 @@ bool igQtConnectedSurfacePropertiesWidget::setSourceModel(Model::Pointer sourceM
     m_InputMesh = m_SourceModel
             ? DynamicCast<SurfaceMesh>(m_SourceModel->GetDataObject())
             : SurfaceMesh::Pointer{};
-    m_LatestOutput = nullptr;
     if (m_NumberOfObjectsLabel) m_NumberOfObjectsLabel->setText(QStringLiteral("—"));
     if (m_AllValidLabel) {
         m_AllValidLabel->setText(QStringLiteral("—"));
@@ -161,7 +165,19 @@ void igQtConnectedSurfacePropertiesWidget::executeFilter() {
     }
 
     m_ModelTreeWidget->addDataObjectToModelTree(m_LatestOutput, Algorithm);
-    if (m_SourceModel) m_SourceModel->SetVisibility(false);
+    const auto output = m_LatestOutput;
+    OutputBinding binding;
+    binding.output = output;
+    binding.source = m_SourceModel;
+    binding.observerTag = output->AddObserver(
+            Command::DeleteEvent,
+            [this, deletedOutput = output.GetPointer()]() { handleOutputDeleted(deletedOutput); });
+    m_OutputBindings.push_back(std::move(binding));
+
+    if (auto scene = m_RendererWidget->GetScene(); scene && m_SourceModel) {
+        scene->ChangeModelVisibility(m_SourceModel, false);
+        m_ModelTreeWidget->RefreshModelTreeVisibilityIcons();
+    }
     m_RendererWidget->update();
     if (m_OutputReadyCallback) m_OutputReadyCallback(m_LatestOutput.GetPointer());
 
@@ -186,6 +202,55 @@ void igQtConnectedSurfacePropertiesWidget::executeFilter() {
     m_StatusLabel->setText(
             QStringLiteral("完成：%1 个对象 | %2 | 详细属性已显示在“查找数据”表格%3")
                     .arg(filter->GetNumberOfObjects()).arg(modeText, validityHint));
+}
+
+void igQtConnectedSurfacePropertiesWidget::detachOutputObservers() {
+    for (auto& binding : m_OutputBindings) {
+        if (binding.output && binding.observerTag) {
+            binding.output->RemoveObserver(binding.observerTag);
+        }
+    }
+    m_OutputBindings.clear();
+}
+
+void igQtConnectedSurfacePropertiesWidget::handleOutputDeleted(SurfaceMesh* output) {
+    auto binding = std::find_if(
+            m_OutputBindings.begin(), m_OutputBindings.end(),
+            [output](const OutputBinding& candidate) {
+                return candidate.output.GetPointer() == output;
+            });
+    if (binding == m_OutputBindings.end()) return;
+
+    const auto source = binding->source;
+    const bool wasLatestOutput = m_LatestOutput.GetPointer() == output;
+    binding->observerTag = 0;
+    m_OutputBindings.erase(binding);
+    if (wasLatestOutput) {
+        m_LatestOutput = m_OutputBindings.empty()
+                ? SurfaceMesh::Pointer{}
+                : m_OutputBindings.back().output;
+    }
+
+    const bool sourceStillHasOutput = std::any_of(
+            m_OutputBindings.begin(), m_OutputBindings.end(),
+            [&source](const OutputBinding& candidate) { return candidate.source == source; });
+    if (!sourceStillHasOutput && source) {
+        if (auto scene = m_RendererWidget->GetScene()) {
+            const auto models = scene->GetAllModels();
+            const bool sourceIsInScene = std::any_of(
+                    models.begin(), models.end(),
+                    [&source](const auto& entry) { return entry.second == source; });
+            if (sourceIsInScene) scene->ChangeModelVisibility(source, true);
+        }
+        m_ModelTreeWidget->RefreshModelTreeVisibilityIcons();
+    }
+    if (wasLatestOutput && m_OutputReadyCallback) {
+        auto replacement = m_LatestOutput
+                ? static_cast<DataObject*>(m_LatestOutput.GetPointer())
+                : (source ? source->GetDataObject().GetPointer() : nullptr);
+        m_OutputReadyCallback(replacement);
+    }
+    m_RendererWidget->update();
 }
 
 void igQtConnectedSurfacePropertiesWidget::showMessage(const QString& text, bool information) {
