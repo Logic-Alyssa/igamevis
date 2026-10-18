@@ -60,8 +60,6 @@
 #include "AttributeManipulation/iGameRandomVectorsFilter.h"
 #include "AttributeManipulation/iGamePerlinNoiseFilter.h"
 
-#include "AppendDatasets/iGameAppendDatasetsFilter.h"
-#include "SurfaceVectors/iGameSurfaceVectorsFilter.h"
 #include "ComputeQuartiles/iGameComputeQuartilesFilter.h"
 #include "AppendArcLength/iGameAppendArcLengthFilter.h"
 #include "Histogram/iGameHistogramFilter.h"
