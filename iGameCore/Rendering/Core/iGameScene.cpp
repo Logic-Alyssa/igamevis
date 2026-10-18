@@ -209,7 +209,7 @@ bool Scene::Initialize() {
     // 添加中心坐标轴到模型池
     m_CenterAxesModel->AddViewStyle(
             IG_WIREFRAME);                   // 添加线框视图样式（默认不显示线）
-    //m_CenterAxesModel->SetAlwaysOnTop(true); // 设置为总在最上层
+    m_CenterAxesModel->SetAlwaysOnTop(true);
     m_CenterAxesModel->ConvertToDrawableData(); // 初始化几何数据
     m_CenterAxesModel->SyncGpuBuffers();        // 上传GPU数据
     this->AddModel(m_CenterAxesModel);          // 加入模型池
@@ -351,6 +351,20 @@ SmartPointer<Model> Scene::GetModelById(int id) {
     }
     return nullptr;
 }
+
+std::vector<std::pair<IGuint, SmartPointer<Model>>> Scene::GetAllModels() {
+    std::vector<std::pair<IGuint, SmartPointer<Model>>> models;
+    models.reserve(m_ModelPool->GetObjectCount());
+    for (auto it = m_ModelPool->Begin(); it != m_ModelPool->End(); ++it) {
+        models.emplace_back(it->first, it->second);
+    }
+    // 句柄池内部是无序 map，这里按模型 id 排序，保证下拉框顺序稳定
+    std::sort(models.begin(), models.end(),
+              [](const std::pair<IGuint, SmartPointer<Model>>& a,
+                 const std::pair<IGuint, SmartPointer<Model>>& b) { return a.first < b.first; });
+    return models;
+}
+
 bool Scene::SetModelById(int id, SmartPointer<Model>model) {
     for (auto it = m_ModelPool->Begin(); it != m_ModelPool->End(); ++it) {
         auto modelID = it->first;
@@ -1088,6 +1102,24 @@ void Scene::ClearSceneFramebuffer(float depth, int width, int height) {
 void Scene::DrawFrame() {
     auto viewport = m_Camera->GetScaledViewPort();
 
+#ifndef __EMSCRIPTEN__
+    // Before the first Resize() the offscreen framebuffer that BindFramebuffer()
+    // selects has no attachments, so any draw into it only raises
+    // GL_INVALID_FRAMEBUFFER_OPERATION (visible right after a window/buffer is
+    // created, e.g. on startup or while the view is still zero-sized).
+    {
+#ifdef GL_SUPPORT_MSAA
+        const SmartPointer<GLFramebuffer>& target = m_FramebufferMultisampled;
+#else
+        const SmartPointer<GLFramebuffer>& target = m_Framebuffer;
+#endif
+        if (target == nullptr ||
+            target->CheckStatus() != GL_FRAMEBUFFER_COMPLETE) {
+            return;
+        }
+    }
+#endif
+
     // Convert to drawable data
     for (auto it = m_ModelPool->Begin(); it != m_ModelPool->End(); ++it) {
         auto model = it->second;
@@ -1101,7 +1133,10 @@ void Scene::DrawFrame() {
         BindFramebuffer();
         ClearSceneFramebuffer(0.0f, viewport.x, viewport.y);
 
-#ifndef __EMSCRIPTEN__
+        // The volume framebuffer only exists when the 4.6/desktop path that
+        // creates it is compiled in; binding it unconditionally crashed the
+        // GL 3.3 feature-level builds (Web/ES and macOS 4.1).
+#ifdef IGAME_OPENGL_VERSION_460
         m_VolumeFramebuffer->Bind();
         ClearSceneFramebuffer(0.0f, viewport.x, viewport.y);
 
@@ -1130,7 +1165,7 @@ void Scene::DrawFrame() {
 #endif
 
         // Draw painter 2d and axes
-        BindFramebuffer();
+        m_Framebuffer->Bind();
         glViewport(0, 0, viewport.x, viewport.y);
         {
             // Draw painter 2D in the image top
@@ -1140,10 +1175,9 @@ void Scene::DrawFrame() {
             }
             if (m_TextOverlay2DActor) { m_TextOverlay2DActor->Draw(); }
 
-            // Draw axes in bottom left
             if (m_AxesVisible) {
                 int mx = std::max(viewport.x, viewport.y);
-                glViewport(0, 0, mx / 10, mx / 10);
+                glViewport(0, 0, mx / 12, mx / 12);
                 m_Axes->Draw();
             }
         }
@@ -1388,6 +1422,15 @@ void Scene::TransparentPass() {
     // Bind framebuffer
     m_Framebuffer->Bind();
 
+    // 先把不透明前景结果拷贝到备份纹理，排序阶段采样它，
+    // 避免“写入 m_ColorTexture 的同时采样同一纹理”的反馈回路
+    {
+        auto viewport = m_Camera->GetScaledViewPort();
+        GLFramebuffer::Blit(m_Framebuffer, m_FramebufferBackup, 0, 0,
+                            viewport.x, viewport.y, 0, 0, viewport.x,
+                            viewport.y, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
     // Enable blending to use the alpha channel for transparency.
     // Without blending, the alpha value in the color will be ignored.
     // glEnable(GL_BLEND);
@@ -1437,7 +1480,7 @@ void Scene::TransparentPass() {
         auto shader = this->GetShader(ShaderType::TRANSPARENCYSORT);
         shader->Use();
 
-        m_ColorTexture->Active(GL_TEXTURE1);
+        m_ColorTextureBackup->Active(GL_TEXTURE1);
         shader->SetUniformi("forwardPassColor", 1);
 
         m_OITHeadPointerTexture->BindImage(0, 0, GL_FALSE, 0, GL_READ_ONLY,
@@ -1736,6 +1779,23 @@ void Scene::SetColorBarVisible(bool visible) {
 
 bool Scene::GetColorBarVisible() const { return m_ColorBarVisible; }
 
+void Scene::ToggleOpacityMappingEnabled() { SetOpacityMappingEnabled(!m_OpacityMappingEnabled); }
+
+void Scene::SetOpacityMappingEnabled(bool enabled) {
+    m_OpacityMappingEnabled = enabled;
+    for (auto it = m_ModelPool->Begin(); it != m_ModelPool->End(); it++) {
+        auto model = it->second;
+        if (!model->GetDataObject()->IsDrawable()) { continue; }
+        auto drawObject = DynamicCast<DrawObject>(model->GetDataObject());
+        drawObject->SetOpacityMappingEnabled(enabled);
+        drawObject->ProcessSubDataObjects(&DrawObject::SetOpacityMappingEnabled,
+                                          enabled);
+    }
+    this->Modified();
+}
+
+bool Scene::GetOpacityMappingEnabled() const { return m_OpacityMappingEnabled; }
+
 SmartPointer<ColorBar2DActor> Scene::GetColorBar2DActor() const {
     return m_ColorBar2DActor;
 }
@@ -1857,6 +1917,8 @@ void Scene::SetVolumeRendering(bool toggled) {
         auto drawObject = DynamicCast<DrawObject>(model->GetDataObject());
         drawObject->SetShellRenderingOption(!toggled);
     }
+    // 默认关闭不透明度映射
+    SetOpacityMappingEnabled(false);
     Update();
 }
 

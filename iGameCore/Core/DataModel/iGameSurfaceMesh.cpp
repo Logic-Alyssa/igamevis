@@ -4,6 +4,7 @@
 #include "iGameScene.h"
 #include "iGameThreadPool.h"
 #include "iGameTimer.h"
+#include <set>
 
 IGAME_NAMESPACE_BEGIN
 
@@ -97,7 +98,15 @@ Face* SurfaceMesh::GetFace(const IGsize faceId) {
 
 int SurfaceMesh::GetEdgePointIds(const IGsize edgeId, igIndex* ptIds) {
     if (m_Edges == nullptr) { this->BuildEdges(); }
-    m_Edges->GetCellIds(edgeId, ptIds);
+    if (ptIds == nullptr) { return 2; }
+    // 边按约定是 2 点单元，但历史 VTK POLYDATA 的 LINES 可能被读成 n 点多段线（实测 347 点）。
+    // 直接 GetCellIds(edgeId, ptIds) 会按单元真实点数写入，写穿调用方的定长缓冲（常见 igIndex e[2] / [32] /
+    // IGAME_CELL_MAX_SIZE=256），触发 /GS 0xC0000409。这里按调用方约定最多拷贝 2 个点，返回值保持 2 不变。
+    const igIndex* cell = nullptr;
+    const int size = m_Edges->GetCellIds(edgeId, cell);
+    if (cell == nullptr || size <= 0) { return 2; }
+    ptIds[0] = cell[0];
+    if (size > 1) { ptIds[1] = cell[1]; }
     return 2;
 }
 
@@ -790,6 +799,30 @@ void SurfaceMesh::ConvertToDrawableData() {
 
         // 转换为可绘制数据
         GetDrawableArray(m_Positions, m_LineIndices, m_TriangleIndices, m_TriangleEdgeMasks);
+        // POLYDATA LINES may reference only part of POINTS. Keep all source
+        // coordinates and point attributes, but render only referenced vertices
+        // in the point representation (matching the line cells in ParaView).
+        m_PointIndices->Reset();
+        if (GetDataObjectType() == IG_SURFACE_MESH && !AreEdgesDerivedFromFaces() && GetNumberOfEdges() > 0) {
+            std::vector<bool> referenced(GetNumberOfPoints(), false);
+            auto markCells = [&](CellArray* cells) {
+                for (IGsize i = 0; cells && i < cells->GetNumberOfCells(); ++i) {
+                    const igIndex* ids = nullptr;
+                    const int count = cells->GetCellIds(i, ids);
+                    for (int j = 0; j < count; ++j) {
+                        if (ids[j] >= 0 && static_cast<IGsize>(ids[j]) < referenced.size()) {
+                            referenced[ids[j]] = true;
+                        }
+                    }
+                }
+            };
+            markCells(GetEdges());
+            markCells(GetFaces());
+            for (IGsize i = 0; i < referenced.size(); ++i) {
+                if (referenced[i]) { m_PointIndices->AddValue(static_cast<iguIndex>(i)); }
+            }
+        }
+        m_PointIndices->Modified();
         m_Positions->Modified();
         m_LineIndices->Modified();
         m_TriangleIndices->Modified();
@@ -860,21 +893,43 @@ void SurfaceMesh::GetDrawableArray(FloatArray::Pointer& positions, UnsignedIntAr
     triangleEdgeMasks->Reset();
     triangleEdgeMasks->SetDimension(1);
 
-    // set line indices
-    if (this->GetEdges() == nullptr) { this->BuildEdges(); }
+    // Surface rendering also consumes explicit LINES. Face-derived wireframe
+    // edges can still be built lazily on the remote rendering path.
+    const bool needLineIndices = NeedsExplicitWireframeGeometry(m_ViewStyle);
+    if (needLineIndices && this->GetEdges() == nullptr) { this->BuildEdges(); }
+
+    // Mixed POLYDATA uses separate surface/line passes. Add polygon boundary
+    // edges for wireframe display without BuildEdges(), which would discard
+    // the original polylines needed by AppendArcLength.
+    const bool drawFaceEdges = HasExplicitLineCells() && (m_ViewStyle & IG_WIREFRAME);
+    std::set<std::pair<igIndex, igIndex>> faceEdges;
+    auto appendFaceEdges = [&](const igIndex* ids, int count) {
+        if (!drawFaceEdges) { return; }
+        for (int j = 0; j < count; ++j) {
+            const auto edge = std::minmax(ids[j], ids[(j + 1) % count]);
+            if (faceEdges.emplace(edge.first, edge.second).second) {
+                lineIndices->AddElement2(static_cast<iguIndex>(edge.first), static_cast<iguIndex>(edge.second));
+            }
+        }
+    };
 
     if (m_Clipper->IsAllDisable()) {
         // set triangle indices
-        int i, ncell;
-        igIndex cell[IGAME_CELL_MAX_SIZE]{};
-
         lineIndices->Reserve(this->GetNumberOfEdges());
-        for (i = 0; i < this->GetNumberOfEdges(); i++) {
-            ncell = this->GetEdgePointIds(i, cell);
-            if (cell[0] < 0 || cell[1] < 0) {
-                igError("The index of the edge is negative.");
-            } else {
-                lineIndices->AddElement2(static_cast<iguIndex>(cell[0]), static_cast<iguIndex>(cell[1]));
+        // 这里必须用返回内部指针的重载：VTK POLYDATA 的 LINES 段是 n 点多段线（可能上千点），
+        // 拷进调用方固定长度缓冲（IGAME_CELL_MAX_SIZE=256）会写穿栈，在函数返回时触发 /GS 0xC0000409。
+        // 按相邻点拆成线段：2 点单元与原来的 (cell[0], cell[1]) 完全等价，n 点多段线则得到正确的折线线框。
+        CellArray::Pointer edges = this->GetEdges();
+        for (IGsize i = 0; edges && i < edges->GetNumberOfCells(); ++i) {
+            const igIndex* cell = nullptr;
+            const int numCellPoints = edges->GetCellIds(i, cell);
+            if (cell == nullptr) { continue; }
+            for (int j = 1; j < numCellPoints; ++j) {
+                if (cell[j - 1] < 0 || cell[j] < 0) {
+                    igError("The index of the edge is negative.");
+                } else {
+                    lineIndices->AddElement2(static_cast<iguIndex>(cell[j - 1]), static_cast<iguIndex>(cell[j]));
+                }
             }
         }
 
@@ -928,6 +983,13 @@ void SurfaceMesh::GetDrawableArray(FloatArray::Pointer& positions, UnsignedIntAr
             };
             ThreadPool::parallelFor(0, fcnt, func);
         }
+        if (drawFaceEdges) {
+            for (IGsize i = 0; i < fcnt; ++i) {
+                const igIndex* ids = nullptr;
+                const int count = GetFaces()->GetCellIds(i, ids);
+                if (ids && count >= 3) { appendFaceEdges(ids, count); }
+            }
+        }
         //IGsize fcnt = this->GetNumberOfFaces();
         //IGsize faceIdNum = this->GetFaces()->GetNumberOfCellIds();
         //triangleIndices->Reserve(faceIdNum - fcnt * 2);
@@ -958,20 +1020,26 @@ void SurfaceMesh::GetDrawableArray(FloatArray::Pointer& positions, UnsignedIntAr
         //}
     } else {
         // set triangle indices
-        int i, ncell;
-        igIndex cell[IGAME_CELL_MAX_SIZE]{};
-
-        for (i = 0; i < this->GetNumberOfEdges(); i++) {
-            ncell = this->GetEdgePointIds(i, cell);
-            if (cell[0] < 0 || cell[1] < 0) {
-                igError("The index of the edge is negative.");
-            } else {
-                lineIndices->AddElement2(static_cast<iguIndex>(cell[0]), static_cast<iguIndex>(cell[1]));
+        // 同上一分支：折线型边单元与任意点数面单元都用指针重载遍历，避免写穿固定长度缓冲。
+        CellArray::Pointer edges = this->GetEdges();
+        for (IGsize i = 0; edges && i < edges->GetNumberOfCells(); ++i) {
+            const igIndex* cell = nullptr;
+            const int numCellPoints = edges->GetCellIds(i, cell);
+            if (cell == nullptr) { continue; }
+            for (int j = 1; j < numCellPoints; ++j) {
+                if (cell[j - 1] < 0 || cell[j] < 0) {
+                    igError("The index of the edge is negative.");
+                } else {
+                    lineIndices->AddElement2(static_cast<iguIndex>(cell[j - 1]), static_cast<iguIndex>(cell[j]));
+                }
             }
         }
 
-        for (i = 0; i < this->GetNumberOfFaces(); i++) {
-            ncell = this->GetFacePointIds(i, cell);
+        CellArray::Pointer faces = this->GetFaces();
+        for (IGsize i = 0; i < faces->GetNumberOfCells(); ++i) {
+            const igIndex* cell = nullptr;
+            const int ncell = faces->GetCellIds(i, cell);
+            if (cell == nullptr) { continue; }
             bool visible = true;
             for (int j = 0; j < ncell; j++) {
                 const auto& point = this->GetPoint(cell[j]);
@@ -981,6 +1049,8 @@ void SurfaceMesh::GetDrawableArray(FloatArray::Pointer& positions, UnsignedIntAr
                 }
             }
             if (!visible) continue;
+
+            appendFaceEdges(cell, ncell);
 
             if (ncell == 6) {
                 triangleIndices->AddElement3(cell[0], cell[1], cell[5]);
@@ -1006,8 +1076,10 @@ void SurfaceMesh::GetDrawableArray(FloatArray::Pointer& positions, UnsignedIntAr
 
 void SurfaceMesh::SetAttributeWithCellData(ArrayObject::Pointer attr, DoubleArray::Pointer attrRange,
                                            igIndex dimension) {
-    if (m_ColorMapper->GetMTime() <= attrRange->GetMTime()) {
-
+    // 抽壳/简化网格（m_IsMainRenderableObject == false）只读范围、不写范围：
+    // 它们的数据是派生/子集（简化网格还会把 cell 属性平均到点上），
+    // 一旦允许它们写共享 mapper，就会把整帧范围改小 → 高值钳到色标上端（全红）。
+    if (m_IsMainRenderableObject && m_ColorMapper->GetMTime() <= attrRange->GetMTime()) {
         if (!m_ColorMapper->GetStable()) {
             double magnitude_min = attrRange->GetValue(0);
             double magnitude_max = attrRange->GetValue(1);
@@ -1024,35 +1096,26 @@ void SurfaceMesh::SetAttributeWithCellData(ArrayObject::Pointer attr, DoubleArra
     // Previously: attrRange->SetValue(0, m_ColorMapper->GetRange()[0]);
     // Previously: attrRange->SetValue(1, m_ColorMapper->GetRange()[1]);
 
-    FloatArray::Pointer colors = m_ColorMapper->MapScalars(attr, dimension);
-    if (colors == nullptr) {
-        // 单元属性取色失败时不能保留上一个属性生成的逐点颜色，否则点样式会显示过期颜色
-        m_Colors = FloatArray::New();
-        m_Colors->SetDimension(3);
-        m_Colors->Modified();
-        return;
-    }
+    FloatArray::Pointer colors = m_ColorMapper->MapScalars(attr, dimension, 4);
+    if (colors == nullptr) { return; }
 
     FloatArray::Pointer newPositions = FloatArray::New();
     FloatArray::Pointer newColors = FloatArray::New();
     UnsignedCharArray::Pointer newEdgeMasks = UnsignedCharArray::New();
     newPositions->SetDimension(3);
-    newColors->SetDimension(3);
+    newColors->SetDimension(4);
     newEdgeMasks->SetDimension(3);
     IGsize fcnt = this->GetNumberOfFaces();
     IGsize faceIdNum = this->GetFaces()->GetNumberOfCellIds();
     newPositions->Reserve(faceIdNum - fcnt * 2);
     newColors->Reserve(faceIdNum - fcnt * 2);
-    // 点样式（IG_POINTS）绘制的是 m_Positions / m_Colors，单元属性的颜色却只在 m_CellColors 里，
-    // 渲染侧过去只好把点画成纯白。这里同时生成逐点颜色（cell->point 取入射单元颜色平均）。
     CellToPointColorBuilder pointColors;
     pointColors.Initialize(this->GetNumberOfPoints());
-    float color[3]{};
+    float color[4]{};
     for (int i = 0; i < this->GetNumberOfFaces(); i++) {
         Face* face = this->GetFace(i);
         colors->GetElement(i, color);
-        const int faceSize = face->GetCellSize();
-        if (faceSize > 0) { pointColors.AddCell(face->m_PointIds->RawPointer(), faceSize, color); }
+        pointColors.AddCell(face->m_PointIds->RawPointer(), face->GetCellSize(), color);
         for (int j = 1; j < face->GetCellSize() - 1; j++) {
             auto& p0 = face->m_Points->GetPoint(0);
             newPositions->AddElement3(p0[0], p0[1], p0[2]);
@@ -1061,14 +1124,17 @@ void SurfaceMesh::SetAttributeWithCellData(ArrayObject::Pointer attr, DoubleArra
             auto& p2 = face->m_Points->GetPoint(j + 1);
             newPositions->AddElement3(p2[0], p2[1], p2[2]);
 
-            newColors->AddElement3(color[0], color[1], color[2]);
-            newColors->AddElement3(color[0], color[1], color[2]);
-            newColors->AddElement3(color[0], color[1], color[2]);
+            newColors->AddElement4(color[0], color[1], color[2], color[3]);
+            newColors->AddElement4(color[0], color[1], color[2], color[3]);
+            newColors->AddElement4(color[0], color[1], color[2], color[3]);
 
             int mask = face->GetCellSize() == 3 ? 7 : j == 1 ? 3 : j == face->GetCellSize() - 2 ? 6 : 2;
             newEdgeMasks->AddValue(mask);
         }
     }
+    m_Colors = pointColors.Build(this->GetDefaultColor());
+    m_Colors->Modified();
+
     m_CellPositionSize = newPositions->GetNumberOfElements();
 
     m_CellPositions = newPositions;
@@ -1079,9 +1145,6 @@ void SurfaceMesh::SetAttributeWithCellData(ArrayObject::Pointer attr, DoubleArra
 
     m_CellTriangleEdgeMasks = newEdgeMasks;
     m_CellTriangleEdgeMasks->Modified();
-
-    m_Colors = pointColors.Build(this->GetDefaultColor());
-    m_Colors->Modified();
 }
 
 
