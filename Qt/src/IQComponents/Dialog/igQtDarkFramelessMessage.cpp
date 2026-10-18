@@ -1,4 +1,5 @@
 #include "IQComponents/Dialog/igQtDarkFramelessMessage.h"
+#include <IQWidgets/igQtRenderWidget.h>
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -38,13 +39,14 @@ igQtDarkFramelessMessageDialog::igQtDarkFramelessMessageDialog(QWidget* parent, 
 
     auto* body = new QWidget(this);
     body->setAttribute(Qt::WA_StyledBackground, true);
-    body->setStyleSheet(
+    body->setStyleSheet(QStringLiteral(
         "QWidget { background-color: transparent; color: #EAEAEA; }"
         "QLabel#DarkMessageText { color: #C9C9C9; background: transparent; }"
         "QPushButton { background-color: #5A6066; color: #ECECEC; border: 1px solid #747C84;"
         "  padding: 6px 16px; border-radius: 4px; min-width: 64px; }"
         "QPushButton:hover { background-color: #666D74; }"
-        "QPushButton:pressed { background-color: #4A5056; }");
+        "QPushButton:pressed { background-color: #4A5056; }"));
+    igQtPanelTheme::attachDeep(this);
 
     auto* root = new QVBoxLayout(body);
     root->setContentsMargins(14, 10, 14, 14);
@@ -71,12 +73,24 @@ igQtDarkFramelessMessageDialog::igQtDarkFramelessMessageDialog(QWidget* parent, 
     row->addWidget(textLabel, 1);
     root->addLayout(row);
 
+    m_buttonRow = new QHBoxLayout();
+    m_buttonRow->setSpacing(10);
+    m_buttonRow->addStretch(1);
     auto* okButton = new QPushButton(QStringLiteral("确定"), body);
-    root->addWidget(okButton, 0, Qt::AlignRight);
+    m_buttonRow->addWidget(okButton);
+    root->addLayout(m_buttonRow);
 
     connect(okButton, &QPushButton::clicked, this, &igQtDarkFramelessMessageDialog::accept);
 
     setContentWidget(body);
+}
+
+QPushButton* igQtDarkFramelessMessageDialog::addButton(const QString& text) {
+    if (!m_buttonRow) return nullptr;
+    auto* btn = new QPushButton(text, this);
+    // 插到「确定」按钮左侧
+    m_buttonRow->insertWidget(m_buttonRow->count() - 1, btn);
+    return btn;
 }
 
 void igQtShowDarkFramelessMessage(QWidget* parent, const QString& title, const QString& text,

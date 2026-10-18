@@ -1,8 +1,11 @@
 #include "iGameFileReader.h"
 #include "iGameByteSwap.h"
+#include "iGameFileSystem.h"
 #include "iGameStringArray.h"
 #include "iGameSurfaceMesh.h"
 #include "iGameVolumeMesh.h"
+
+#include <limits>
 
 IGAME_NAMESPACE_BEGIN
 FileReader::FileReader() {
@@ -117,7 +120,7 @@ bool FileReader::Open() {
 
 bool FileReader::OpenWithFreadType() {
     // 打开文件，使用二进制模式读取
-    file_ = fopen(m_FilePath.c_str(), "rb");
+    file_ = FileSystem::OpenFile(m_FilePath, "rb");
     if (file_ == nullptr) {
         IGAME_CORE_ERROR("fopen failed to open the file.\n");
         return false;
@@ -170,9 +173,17 @@ bool FileReader::OpenWithFreadType() {
 }
 bool FileReader::OpenWithWindowsSystem() {
 #ifdef PLATFORM_WINDOWS
-    // 打开文件
-    this->m_File = CreateFile(m_FilePath.data(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
-                              FILE_ATTRIBUTE_NORMAL, NULL);
+    // m_FilePath is UTF-8. Use the wide Win32 API so paths are independent
+    // from the process/system ANSI code page.
+    std::filesystem::path nativePath;
+    try {
+        nativePath = FileSystem::PathFromUtf8(m_FilePath);
+    } catch (const std::filesystem::filesystem_error&) {
+        IGAME_CORE_ERROR("Invalid UTF-8 file path: {}", m_FilePath);
+        return false;
+    }
+    this->m_File = CreateFileW(nativePath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                               FILE_ATTRIBUTE_NORMAL, NULL);
     if (m_File == INVALID_HANDLE_VALUE) {
         _tprintf(_T("CreateFile failed with error: %lu\n"), GetLastError());
         return false;
@@ -183,6 +194,7 @@ bool FileReader::OpenWithWindowsSystem() {
     if (!GetFileSizeEx(m_File, &fileSize)) {
         _tprintf(_T("GetFileSizeEx failed with error: %lu\n"), GetLastError());
         CloseHandle(m_File);
+        m_File = nullptr;
         return false;
     }
     this->m_FileSize = fileSize.QuadPart; // 将文件大小以字节为单位赋值给 m_FileSize
@@ -192,6 +204,7 @@ bool FileReader::OpenWithWindowsSystem() {
     if (m_MapFile == NULL) {
         _tprintf(_T("CreateFileMapping failed with error: %lu\n"), GetLastError());
         CloseHandle(m_File);
+        m_File = nullptr;
         return false;
     }
 
@@ -201,6 +214,8 @@ bool FileReader::OpenWithWindowsSystem() {
         _tprintf(_T("MapViewOfFile failed with error: %lu\n"), GetLastError());
         CloseHandle(m_MapFile);
         CloseHandle(m_File);
+        m_MapFile = nullptr;
+        m_File = nullptr;
         return false;
     }
     this->IS = this->FILESTART;
@@ -250,11 +265,23 @@ bool FileReader::Close() {
     }
 #endif
 #ifdef PLATFORM_WINDOWS
+    // Close() can be called by a format reader before FileReader::Execute()
+    // performs its common cleanup.  Release each resource from its owning
+    // handle/pointer and clear the state so a later Close() is a no-op.
+    if (this->m_MapFile && this->FILESTART) {
+        UnmapViewOfFile(this->FILESTART);
+        this->FILESTART = nullptr;
+        this->IS = nullptr;
+        this->FILEEND = nullptr;
+    }
     if (this->m_MapFile) {
-        UnmapViewOfFile(this->IS);
         CloseHandle(this->m_MapFile);
+        this->m_MapFile = nullptr;
+    }
+    if (this->m_File && this->m_File != INVALID_HANDLE_VALUE) {
         CloseHandle(this->m_File);
     }
+    this->m_File = nullptr;
 
 #elif defined(PLATFORM_LINUX) || defined(PLATFORM_MAC)
     if (m_File != -1) { close(m_File); }
@@ -308,11 +335,21 @@ bool FileReader::CreateDataObject() {
 // Internal function to read in an integer value.
 // Returns zero if there was an error.
 int FileReader::Read(char* result) {
-    if (this->IS < this->FILEEND) {
-        *result = (char) *this->IS;
-        return 1;
+    if (m_FileType == IGAME_BINARY) {
+        if (this->IS < this->FILEEND) {
+            *result = (char) *this->IS;
+            ++this->IS;
+            return 1;
+        }
+        return 0;
     }
-    return 0;
+    // ASCII 里 char / unsigned char 数组存的是数值（例如 vtkGhostType 写的是 0 / 2 / 32），必须按数字解析。
+    // 按字符读会写入 ASCII 码（'0' = 48）并且只前进 1 字节，导致同一文件里 unsigned_char 数组之后的
+    // 段解析错位（CELL_DATA 段后面的 POINT_DATA 段整段丢失、nan/inf 之后的数值全部变 0 由此产生）。
+    int intData = 0;
+    this->IS = mAtoi(this->IS, intData);
+    *result = static_cast<char>(intData);
+    return 1;
 }
 //------------------------------------------------------------------------------
 int FileReader::Read(char* data, size_t n) {
@@ -326,11 +363,18 @@ int FileReader::Read(char* data, size_t n) {
 }
 //------------------------------------------------------------------------------
 int FileReader::Read(unsigned char* result) {
-    if (this->IS < this->FILEEND) {
-        *result = (unsigned char) *this->IS;
-        return 1;
+    if (m_FileType == IGAME_BINARY) {
+        if (this->IS < this->FILEEND) {
+            *result = (unsigned char) *this->IS;
+            ++this->IS;
+            return 1;
+        }
+        return 0;
     }
-    return 0;
+    int intData = 0;
+    this->IS = mAtoi(this->IS, intData);
+    *result = static_cast<unsigned char>(intData);
+    return 1;
 }
 
 //------------------------------------------------------------------------------
@@ -396,14 +440,66 @@ int FileReader::Read(unsigned long long* result) {
 }
 
 //------------------------------------------------------------------------------
+namespace {
+const char* SkipWhiteSpace(const char* p) {
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') { ++p; }
+    return p;
+}
+
+// VTK 的 ASCII 文件里会出现 nan / inf / infinity（例如 hist_nan.vtk 的 "1 nan 2 inf"）：
+// 核心的 mAtof 只认数字，遇到这两个词既读不出值，游标也会停在原地，导致该数组之后的所有数值
+// 都被读成 0。这里在调用 mAtof 之前先识别这两个词，识别成功就把游标越过整个词。
+bool TryReadNonFinite(const char* p, double& value, const char*& end) {
+    p = SkipWhiteSpace(p);
+    bool negative = false;
+    if (*p == '-') {
+        negative = true;
+        p = SkipWhiteSpace(p + 1);
+    } else if (*p == '+') {
+        p = SkipWhiteSpace(p + 1);
+    }
+    if ((p[0] == 'n' || p[0] == 'N') && (p[1] == 'a' || p[1] == 'A') && (p[2] == 'n' || p[2] == 'N')) {
+        value = negative ? -std::numeric_limits<double>::quiet_NaN() : std::numeric_limits<double>::quiet_NaN();
+        end = p + 3;
+        return true;
+    }
+    if ((p[0] == 'i' || p[0] == 'I') && (p[1] == 'n' || p[1] == 'N') && (p[2] == 'f' || p[2] == 'F')) {
+        const char* q = p + 3;
+        if ((q[0] == 'i' || q[0] == 'I') && (q[1] == 'n' || q[1] == 'N') && (q[2] == 'i' || q[2] == 'I') &&
+            (q[3] == 't' || q[3] == 'T') && (q[4] == 'y' || q[4] == 'Y')) {
+            q += 5;  // "infinity"
+        }
+        value = negative ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity();
+        end = q;
+        return true;
+    }
+    return false;
+}
+}  // namespace
+
+//------------------------------------------------------------------------------
 int FileReader::Read(float* result) {
-    this->IS = mAtof(this->IS, *result);
+    double value = 0.0;
+    const char* end = nullptr;
+    if (TryReadNonFinite(this->IS, value, end)) {
+        this->IS = end;
+    } else {
+        this->IS = mAtof(this->IS, value);
+    }
+    *result = static_cast<float>(value);
     return 1;
 }
 
 //------------------------------------------------------------------------------
 int FileReader::Read(double* result) {
-    this->IS = mAtof(this->IS, *result);
+    double value = 0.0;
+    const char* end = nullptr;
+    if (TryReadNonFinite(this->IS, value, end)) {
+        this->IS = end;
+    } else {
+        this->IS = mAtof(this->IS, value);
+    }
+    *result = value;
     return 1;
 }
 

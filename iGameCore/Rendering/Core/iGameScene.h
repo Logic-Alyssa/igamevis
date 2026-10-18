@@ -24,6 +24,8 @@
 #include "iGameShaderManager.h"
 #include "iGameTextOverlay2DActor.h"
 #include <chrono>
+#include <utility>
+#include <vector>
 
 IGAME_NAMESPACE_BEGIN
 
@@ -93,6 +95,12 @@ public:
      */
     SmartPointer<Model> GetModelById(int modelID);
     bool SetModelById(int modelID, SmartPointer<Model>model);
+
+    /**
+     * @brief 列出场景中所有模型（含模型 id），供工具面板枚举输入模型用。
+     * @return {模型 id, 模型指针} 列表，按模型 id 升序。
+     */
+    std::vector<std::pair<IGuint, SmartPointer<Model>>> GetAllModels();
 
     /**
      * @brief 根据索引获取数据对象。
@@ -304,6 +312,20 @@ public:
      * @brief 获取ColorBar2DActor对象（仅Web端）
      * @return ColorBar2DActor对象的智能指针
      */
+    void ToggleOpacityMappingEnabled();
+    /**
+     * @brief 设置是否启用不透明度映射
+     */
+    void SetOpacityMappingEnabled(bool enabled);
+    /**
+     * @brief 获取ColorBar的显示状态（仅Web端）
+     * @return 是否显示ColorBar
+     */
+    bool GetOpacityMappingEnabled() const;
+    /**
+     * @brief 获取ColorBar2DActor对象（仅Web端）
+     * @return ColorBar2DActor对象的智能指针
+     */
     SmartPointer<ColorBar2DActor> GetColorBar2DActor() const;
     /**
      * @brief 设置角标文本内容
@@ -494,6 +516,7 @@ protected:
     bool m_AxesVisible {true};
     SmartPointer<Axes> m_Axes;
     bool m_ColorBarVisible {false};
+    bool m_OpacityMappingEnabled {false};
     SmartPointer<ColorBar2DActor> m_ColorBar2DActor;
     SmartPointer<TextOverlay2DActor> m_TextOverlay2DActor;
 
