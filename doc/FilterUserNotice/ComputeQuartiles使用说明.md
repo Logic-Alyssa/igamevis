@@ -107,26 +107,58 @@ if (filter->Execute()) {
 
 ---
 
-## 4. 注意事项
+## 4. 使用示例
 
-### 4.1 输入要求
+### 示例 1：统计单个点标量属性
+
+1. 打开 `Examples/Models/Quartiles_plane.vtk`；
+2. 菜单【算法处理】→【新增filter/第二批】→【Compute Quartiles】；
+3. 属性下拉框选择 `Temperature`，点击执行；
+4. 弹出统计表显示 5 行统计值：`Min=10 / Q1=22.5 / Median=32.5 / Q3=42.5 / Max=55`
+   （Tukey hinges 定义，与 ParaView 6.1.1 实测一致），输出模型命名为 `compute_quartiles_result`。
+
+### 示例 2：一次统计全部点标量属性
+
+属性下拉框选择第一项「全部点标量属性」，执行后统计表逐属性分行
+（如 `Temperature`、`Pressure` 各一行），单元属性（`CellValue`）自动跳过。
+
+### 示例 3：重看结果与导出
+
+- 在模型树中选中已有的 `compute_quartiles_result` 节点，统计表直接重新弹出，无需重复计算；
+- 点击统计表中的【保存 CSV】可将结果导出为全精度 CSV 文件（17 位有效数字）。
+
+### 示例 4：C++ 代码调用
+
+```cpp
+auto quartiles = ComputeQuartilesFilter::New();
+quartiles->SetInput(surfaceMesh);   // 任意含点标量属性的网格
+quartiles->Execute();
+auto result = quartiles->GetOutput(); // 5 顶点 PointSet
+// 输出数组名为 Temperature_Quartiles，元素 0..4 依次为 Min/Q1/Median/Q3/Max
+```
+
+---
+
+## 5. 注意事项
+
+### 5.1 输入要求
 
 - 输入网格类型不限（SurfaceMesh / VolumeMesh / UnstructuredMesh 均可）；
 - 属性维度必须为 1（标量），向量 / 张量属性会被跳过；
 - 支持 FloatArray、DoubleArray、IntArray 等所有数值型数组；
 - 全属性模式下若输入不含点标量属性，执行失败并返回错误信息。
 
-### 4.2 输出属性
+### 5.2 输出属性
 
 对每个被统计的属性 `A`，在输出 5 顶点 PointSet 上添加名为 `A_Quartiles` 的标量数组
 （维度=1，长度=5），元素 0..4 依次为 `[Min, Q1, Median, Q3, Max]`。
 
-### 4.3 遗留接口
+### 5.3 遗留接口
 
 `GetMean() / GetSum() / GetStdDev() / GetCount()` 属于 Descriptive Statistics 范畴，
 不属于 Compute Quartiles，**已废弃并固定返回 0**。
 
-### 4.4 测试模型
+### 5.4 测试模型
 
 `Examples/Models/` 目录下提供了测试模型：
 
