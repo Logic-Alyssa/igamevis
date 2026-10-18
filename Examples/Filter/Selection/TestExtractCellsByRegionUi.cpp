@@ -1,7 +1,7 @@
-// Regression trigger: the numerical filter test passed while the real Qt
+﻿// Regression trigger: the numerical filter test passed while the real Qt
 // entry had no usable Preview/result. Expected: menu -> dialog -> Preview ->
 // Apply creates one result; changing shape/parameters and applying again
-// updates the same model. Fix: "feat: validate ParaView-style region extraction UI".
+// updates the same model. Fix: "feat: integrate region extraction with latest main".
 // Find its SHA with git log --diff-filter=A --format="%h %s" -- Examples/Filter/Selection/TestExtractCellsByRegionUi.cpp
 #include <IQComponents/igQtFilterDialogDockWidget.h>
 #include <IQComponents/igQtModelDialogWidget.h>
@@ -9,6 +9,7 @@
 #include <IQWidgets/igQtModelDrawWidget.h>
 #include <iGameFileIO.h>
 #include <iGameBoxStyle.h>
+#include <iGameCamera.h>
 #include <iGameInteractor.h>
 #include <iGameRadialStyle.h>
 #include <iGameScene.h>
@@ -146,6 +147,139 @@ int main(int argc, char** argv) {
     initialShape->setCurrentIndex(0);
     app.processEvents();
 
+    // Regression: boundary handles were hidden in center-only mode, and the
+    // generic Box drag moved the opposite face when clamped. Fix: "feat: finalize region controls and polyhedron extraction" (same commit).
+    // Exercise every face in an oblique view, round trips and crossing the
+    // opposite face: only the chosen coordinate may change; camera stays still.
+    auto camera = initialInteractor->GetCamera();
+    const auto savedPosition = camera->GetPosition();
+    const auto focal = camera->GetFocal();
+    const float distance = (savedPosition - focal).length();
+    camera->SetPosition(focal + igm::vec3(0.65f, 0.5f, 1.f) * distance);
+    app.processEvents();
+    const auto resizeCamera = camera->GetPosition();
+    constexpr int axes[] = {1, 1, 0, 0, 2, 2};
+    constexpr bool maximum[] = {true, false, false, true, true, false};
+    auto resetBox = [&]() {
+        for (int id = 1; id <= 6; ++id)
+            qobject_cast<QLineEdit*>(dialog->getWidget(id))->setText(id <= 3 ? "-1" : "1");
+        QMetaObject::invokeMethod(dialog->getWidget(6), "editingFinished");
+        app.processEvents();
+    };
+    for (int face = 0; face < 6; ++face) {
+        for (float shift : {0.35f, -0.35f, -4.f}) {
+            resetBox();
+            const auto before = initialBox->GetBox()->GetExtremePoint();
+            const auto handle = initialBox->GetBox()->GetOpePoints()[face];
+            auto offset = handle;
+            const int axis = axes[face];
+            const float sign = maximum[face] ? 1.f : -1.f;
+            offset[axis] += 2.f;
+            const auto from = Project(initialInteractor, handle);
+            // Add a perpendicular mouse component: it must not amplify resize.
+            const auto pixels = (Project(initialInteractor, offset) - from) / 2.f;
+            const auto perpendicular = igm::vec2(-pixels.y, pixels.x) * 0.1f;
+            Drag(initialInteractor, from, from + pixels * (sign * shift) + perpendicular,
+                 iGame::LeftButton);
+            app.processEvents();
+            const auto after = initialBox->GetBox()->GetExtremePoint();
+            for (int a = 0; a < 3; ++a) {
+                const bool lowFixed = a != axis || maximum[face];
+                const bool highFixed = a != axis || !maximum[face];
+                if ((lowFixed && std::abs(after.first[a] - before.first[a]) > 1.e-5) ||
+                    (highFixed && std::abs(after.second[a] - before.second[a]) > 1.e-5)) {
+                    std::cerr << "Box resize moved a fixed face: " << face << "\n"; return 33;
+                }
+                for (int side = 0; side < 2; ++side) {
+                    const double coordinate = side ? after.second[a] : after.first[a];
+                    if (std::abs(qobject_cast<QLineEdit*>(dialog->getWidget(1 + a + side * 3))->text().toDouble() - coordinate) > 1.e-5)
+                        return 34;
+                }
+            }
+            const float extent = after.second[axis] - after.first[axis];
+            if ((shift > 0 && extent <= 2.f) || (shift < 0 && extent >= 2.f) ||
+                extent <= 0.f || (shift < -2 && extent > 1.e-5f) ||
+                (camera->GetPosition() - resizeCamera).length() > 1.e-6f) {
+                std::cerr << "Box resize direction/clamp/camera failed: " << face << " extent " << extent << "\n"; return 35;
+            }
+        }
+    }
+    resetBox();
+    // Regression: grabbing the outline either did nothing or resized the
+    // region. Fix: "feat: finalize region controls and polyhedron extraction" (same commit). A line (away from resize handles) must translate
+    // without a grab jump, preserve all extents and leave the camera fixed.
+    bool edgeTested = false;
+    for (const auto& edge : initialBox->GetBox()->GetAllEdges()) {
+        const auto p = edge.first + (edge.second - edge.first) * .25f;
+        const auto from = Project(initialInteractor, p);
+        bool clear = (from - Project(initialInteractor, initialBox->GetBox()->GetMidPoint())).length() > 35.f;
+        for (const auto& handle : initialBox->GetBox()->GetOpePoints())
+            clear &= (from - Project(initialInteractor, handle)).length() > 20.f;
+        if (!clear) continue;
+        const auto before = initialBox->GetBox()->GetExtremePoint();
+        const auto center = initialBox->GetBox()->GetMidPoint();
+        initialInteractor->FilterEvent({iGame::IEvent::MousePress, iGame::LeftButton, from, 0.});
+        initialInteractor->FilterEvent({iGame::IEvent::MouseMove, iGame::LeftButton, from, 0.});
+        if ((initialBox->GetBox()->GetMidPoint() - center).length() > 1.e-5) return 45;
+        const auto to = from + igm::vec2{35.f, 20.f};
+        initialInteractor->FilterEvent({iGame::IEvent::MouseMove, iGame::LeftButton, to, 0.});
+        initialInteractor->FilterEvent({iGame::IEvent::MouseRelease, iGame::LeftButton, to, 0.});
+        app.processEvents();
+        const auto after = initialBox->GetBox()->GetExtremePoint();
+        if ((initialBox->GetBox()->GetMidPoint() - center).length() < 1.e-5 ||
+            ((after.second - after.first) - (before.second - before.first)).length() > 1.e-4 ||
+            (camera->GetPosition() - resizeCamera).length() > 1.e-6 ||
+            std::abs(qobject_cast<QLineEdit*>(dialog->getWidget(1))->text().toDouble() - after.first[0]) > 1.e-5) return 46;
+        edgeTested = true;
+        break;
+    }
+    if (!edgeTested) return 47;
+    resetBox();
+    // Regression: ParaView middle/right gestures previously fell through to
+    // camera motion. Fix: "feat: finalize region controls and polyhedron extraction" (same commit). Middle translates the picked box; right
+    // scales all axes around a fixed center, including an oblique view.
+    {
+        const auto bounds = initialBox->GetBox()->GetExtremePoint();
+        const auto center = initialBox->GetBox()->GetMidPoint();
+        const auto from = Project(initialInteractor, center);
+        Drag(initialInteractor, from, from + igm::vec2{25.f, 15.f}, iGame::MiddleButton);
+        app.processEvents();
+        const auto moved = initialBox->GetBox()->GetExtremePoint();
+        if ((initialBox->GetBox()->GetMidPoint() - center).length() < 1.e-5 ||
+            ((moved.second - moved.first) - (bounds.second - bounds.first)).length() > 1.e-4 ||
+            (camera->GetPosition() - resizeCamera).length() > 1.e-6) return 52;
+        resetBox();
+        for (float factor : {1.4f, .6f}) {
+            const auto before = initialBox->GetBox()->GetExtremePoint();
+            const auto c = initialBox->GetBox()->GetMidPoint();
+            const auto cp = Project(initialInteractor, c);
+            const auto hp = Project(initialInteractor, initialBox->GetBox()->GetOpePoints()[3]);
+            Drag(initialInteractor, hp, cp + (hp - cp) * factor, iGame::RightButton);
+            app.processEvents();
+            const auto after = initialBox->GetBox()->GetExtremePoint();
+            const auto oldSize = before.second - before.first, newSize = after.second - after.first;
+            const double ratio = newSize[0] / oldSize[0];
+            if ((initialBox->GetBox()->GetMidPoint() - c).length() > 1.e-5 ||
+                (factor > 1.f ? ratio <= 1. : ratio >= 1.) ||
+                std::abs(newSize[1] / oldSize[1] - ratio) > 1.e-4 ||
+                std::abs(newSize[2] / oldSize[2] - ratio) > 1.e-4 ||
+                (camera->GetPosition() - resizeCamera).length() > 1.e-6 ||
+                std::abs(qobject_cast<QLineEdit*>(dialog->getWidget(4))->text().toDouble() - after.second[0]) > 1.e-5)
+                return 53;
+        }
+        resetBox();
+    }
+    const auto returnHandle = initialBox->GetBox()->GetOpePoints()[3];
+    const auto returnFrom = Project(initialInteractor, returnHandle);
+    const auto returnTo = returnFrom + igm::vec2{40.f, 15.f};
+    initialInteractor->FilterEvent({iGame::IEvent::MousePress, iGame::LeftButton, returnFrom, 0.});
+    initialInteractor->FilterEvent({iGame::IEvent::MouseMove, iGame::LeftButton, returnTo, 0.});
+    initialInteractor->FilterEvent({iGame::IEvent::MouseMove, iGame::LeftButton, returnFrom, 0.});
+    initialInteractor->FilterEvent({iGame::IEvent::MouseRelease, iGame::LeftButton, returnFrom, 0.});
+    if (std::abs(initialBox->GetBox()->GetExtremePoint().second[0] - 1.f) > 1.e-5) return 36;
+    camera->SetPosition(savedPosition);
+    app.processEvents();
+
     const char* values[] = {"-1", "-1", "-1", "1", "1", "1"};
     for (int id = 1; id <= 6; ++id) {
         auto* edit = qobject_cast<QLineEdit*>(dialog->getWidget(id));
@@ -255,6 +389,129 @@ int main(int argc, char** argv) {
     app.processEvents();
     if (scene->GetCurrentModelID() != resultId) return 15;
 
+    // Regression: the sphere outline was not a translation target. Fix: "feat: finalize region controls and polyhedron extraction" (same commit).
+    // Use a view-facing arc away from the radius dot; grabbing must not snap
+    // the center to the border, and movement must preserve radius and camera.
+    const auto borderCenter = sphere->GetStartPoint();
+    const auto borderCamera = camera->GetPosition();
+    const double borderRadius = (sphere->GetEndPoint() - borderCenter).length();
+    const auto borderPixel = Project(interactor, borderCenter + iGame::Point(0.f, borderRadius * .5f, borderRadius * .8660254f));
+    interactor->FilterEvent({iGame::IEvent::MousePress, iGame::LeftButton, borderPixel, 0.});
+    interactor->FilterEvent({iGame::IEvent::MouseMove, iGame::LeftButton, borderPixel, 0.});
+    if ((sphere->GetStartPoint() - borderCenter).length() > 1.e-5) return 48;
+    const auto borderTo = borderPixel + igm::vec2{35.f, 20.f};
+    interactor->FilterEvent({iGame::IEvent::MouseMove, iGame::LeftButton, borderTo, 0.});
+    interactor->FilterEvent({iGame::IEvent::MouseRelease, iGame::LeftButton, borderTo, 0.});
+    app.processEvents();
+    if ((sphere->GetStartPoint() - borderCenter).length() < 1.e-5 ||
+        std::abs((sphere->GetEndPoint() - sphere->GetStartPoint()).length() - borderRadius) > 1.e-4 ||
+        (camera->GetPosition() - borderCamera).length() > 1.e-6 ||
+        std::abs(qobject_cast<QLineEdit*>(dialog->getWidget(1))->text().toDouble() - sphere->GetStartPoint()[0]) > 1.e-5)
+        return 49;
+    // Regression: a drawn latitude could not be grabbed when picking still
+    // used only three great circles. Fix: "feat: finalize region controls and polyhedron extraction" (same commit). Grab the middle of a new
+    // latitude segment away from center/radius controls; preserve the radius.
+    {
+        const auto c = sphere->GetStartPoint();
+        const double r = (sphere->GetEndPoint() - c).length();
+        constexpr double pi = 3.14159265358979323846;
+        auto p = [&](double theta) {
+            const double phi = 2. * pi / 7.;
+            return c + iGame::Point(r * std::sin(phi) * std::cos(theta),
+                                   r * std::sin(phi) * std::sin(theta), r * std::cos(phi));
+        };
+        const auto from = Project(interactor, (p(pi / 4.) + p(3. * pi / 8.)) * .5f);
+        Drag(interactor, from, from + igm::vec2{25.f, 10.f}, iGame::LeftButton);
+        app.processEvents();
+        if ((sphere->GetStartPoint() - c).length() < 1.e-5 ||
+            std::abs((sphere->GetEndPoint() - sphere->GetStartPoint()).length() - r) > 1.e-4 ||
+            (camera->GetPosition() - borderCamera).length() > 1.e-6) return 56;
+    }
+    // Regression: Sphere right drag used to zoom the camera. Fix: "feat: finalize region controls and polyhedron extraction" (same commit).
+    // VTK's upward drag grows the radius, downward shrinks; center stays fixed.
+    {
+        const auto c = sphere->GetStartPoint();
+        const double r = (sphere->GetEndPoint() - c).length();
+        const auto from = Project(interactor, c);
+        Drag(interactor, from, from + igm::vec2{25.f, 15.f}, iGame::MiddleButton);
+        app.processEvents();
+        if ((sphere->GetStartPoint() - c).length() < 1.e-5 ||
+            std::abs((sphere->GetEndPoint() - sphere->GetStartPoint()).length() - r) > 1.e-4 ||
+            (camera->GetPosition() - borderCamera).length() > 1.e-6) return 54;
+        const auto fixed = sphere->GetStartPoint();
+        for (float dy : {-30.f, 30.f}) {
+            const double before = (sphere->GetEndPoint() - fixed).length();
+            const auto hp = Project(interactor, sphere->GetRadiusHandle());
+            Drag(interactor, hp, hp + igm::vec2{0.f, dy}, iGame::RightButton);
+            app.processEvents();
+            const double after = (sphere->GetEndPoint() - fixed).length();
+            if ((sphere->GetStartPoint() - fixed).length() > 1.e-5 ||
+                (dy < 0.f ? after <= before : after >= before) ||
+                std::abs(radius->text().toDouble() - after) > 1.e-5 ||
+                (camera->GetPosition() - borderCamera).length() > 1.e-6) {
+                std::cerr << "Sphere right-scale failed: dy=" << dy << " before=" << before << " after=" << after
+                          << " centerDelta=" << (sphere->GetStartPoint() - fixed).length()
+                          << " field=" << radius->text().toDouble()
+                          << " cameraDelta=" << (camera->GetPosition() - borderCamera).length() << "\n";
+                return 55;
+            }
+        }
+    }
+    const auto fixedCenter = sphere->GetStartPoint();
+    const auto fixedCamera = camera->GetPosition();
+    for (float factor : {1.5f, 0.5f, -1.f, 1.2f}) {
+        radius->setText(QStringLiteral("1"));
+        QMetaObject::invokeMethod(radius, "editingFinished");
+        app.processEvents();
+        const auto centerPixel = Project(interactor, fixedCenter);
+        const auto handlePixel = Project(interactor, sphere->GetRadiusHandle());
+        Drag(interactor, handlePixel, centerPixel + (handlePixel - centerPixel) * factor,
+             iGame::LeftButton);
+        app.processEvents();
+        const double r = (sphere->GetEndPoint() - fixedCenter).length();
+        const double expected = factor > 0.f ? factor : 2.2e-6;
+        if ((sphere->GetStartPoint() - fixedCenter).length() > 1.e-6 ||
+            std::abs(r - expected) > 2.e-5 ||
+            std::abs(radius->text().toDouble() - r) > 1.e-5 ||
+            (camera->GetPosition() - fixedCamera).length() > 1.e-6) {
+            std::cerr << "Sphere radius resize/clamp/sync failed: " << r << "\n"; return 37;
+        }
+        previewButton->click(); app.processEvents();
+        int chosen = -1;
+        for (auto* label : dialog->findChildren<QLabel*>()) {
+            if (label->text().startsWith(QStringLiteral("预览：")))
+                chosen = label->text().section(QChar(0xff1a), 1).section(' ', 0, 0).toInt();
+        }
+        if (chosen < 0) return 38;
+        applyButton->click(); app.processEvents();
+        if (scene->GetCurrentModelID() != resultId) return 39;
+        if (chosen > 0) {
+            auto mesh = iGame::DynamicCast<iGame::UnstructuredMesh>(scene->GetCurrentModel()->GetDataObject());
+            if (!mesh || mesh->GetNumberOfCells() != chosen) return 40;
+        }
+    }
+    const auto radiusBeforeView = (sphere->GetEndPoint() - fixedCenter).length();
+    camera->SetPosition(camera->GetFocal() + igm::vec3(1.f, 0.5f, 0.7f) * distance);
+    const auto viewHandle = sphere->GetRadiusHandle();
+    if (std::abs((viewHandle - fixedCenter).length() - radiusBeforeView) > 1.e-4 ||
+        (sphere->GetStartPoint() - fixedCenter).length() > 1.e-6) return 41;
+    const auto obliqueCenterPixel = Project(interactor, fixedCenter);
+    const auto obliqueHandlePixel = Project(interactor, viewHandle);
+    Drag(interactor, obliqueHandlePixel,
+         obliqueCenterPixel + (obliqueHandlePixel - obliqueCenterPixel) * 0.8f, iGame::LeftButton);
+    app.processEvents();
+    if ((sphere->GetStartPoint() - fixedCenter).length() > 1.e-6 ||
+        std::abs((sphere->GetEndPoint() - fixedCenter).length() - radiusBeforeView * 0.8) > 1.e-4)
+        return 43;
+    const auto roundTrip = Project(interactor, sphere->GetRadiusHandle());
+    const auto roundRadius = (sphere->GetEndPoint() - fixedCenter).length();
+    interactor->FilterEvent({iGame::IEvent::MousePress, iGame::LeftButton, roundTrip, 0.});
+    interactor->FilterEvent({iGame::IEvent::MouseMove, iGame::LeftButton, roundTrip + igm::vec2{40.f, 0.f}, 0.});
+    interactor->FilterEvent({iGame::IEvent::MouseMove, iGame::LeftButton, roundTrip, 0.});
+    interactor->FilterEvent({iGame::IEvent::MouseRelease, iGame::LeftButton, roundTrip, 0.});
+    if (std::abs((sphere->GetEndPoint() - fixedCenter).length() - roundRadius) > 1.e-4) return 44;
+    camera->SetPosition(fixedCamera);
+
     radius->setText(QStringLiteral("-1"));
     previewButton->click();
     app.processEvents();
@@ -274,6 +531,7 @@ int main(int argc, char** argv) {
     }
     dialog->close();
     app.processEvents();
+    if (interactor->GetSpecialInteractor("ExtractCellsByRegionSphere")) return 42;
     std::cout << "iGameVis region menu, dialog, Box/Sphere Preview and reusable Apply passed\n";
     window.close();
     return 0;

@@ -1,4 +1,5 @@
-﻿#include "iGameBoxStyle.h"
+﻿#include <algorithm>
+#include "iGameBoxStyle.h"
 #include "iGameInteractor.h"
 #include "iGameLine.h"
 #include "iGameScene.h"
@@ -313,6 +314,29 @@ std::tuple<bool, Point> BoxStyle::MeetBoxEdge(IEvent event,
                                               const Point& rayStart,
                                               const Point& rayDir) {
     std::tuple<bool, Point> re(false, Point{});
+    if (m_AllowBoundaryDrag && m_CenterTranslationMode) {
+        // Pick only the visible outline, using a stable screen-space tolerance.
+        float closest = 7.f;
+        for (const auto& edge : m_DynamicBox->GetAllEdges()) {
+            const auto a = m_MVP * PointToVec4(edge.first);
+            const auto b = m_MVP * PointToVec4(edge.second);
+            if (a.w <= 0.f || b.w <= 0.f) continue;
+            const igm::vec2 start((a.x / a.w + 1.f) * m_Interactor->GetWidth() * .5f,
+                                  (1.f - a.y / a.w) * m_Interactor->GetHeight() * .5f);
+            const igm::vec2 end((b.x / b.w + 1.f) * m_Interactor->GetWidth() * .5f,
+                                (1.f - b.y / b.w) * m_Interactor->GetHeight() * .5f);
+            const auto d = end - start;
+            const float length2 = d.x * d.x + d.y * d.y;
+            const auto offset = event.pos - start;
+            const float t = length2 > 0.f ? std::clamp((offset.x * d.x + offset.y * d.y) / length2, 0.f, 1.f) : 0.f;
+            const float distance = (offset - d * t).length();
+            if (distance < closest) {
+                closest = distance;
+                re = {true, edge.first + (edge.second - edge.first) * t};
+            }
+        }
+        return re;
+    }
     //Select OpePoint Edge
     auto& opePoints = m_DynamicBox->GetOpePoints();
     float minDist = std::numeric_limits<float>::max();
@@ -383,6 +407,7 @@ void BoxStyle::MousePressEvent(IEvent event) {
     if (!SelectionParameter::Instance().GetHaveBox()) return;
     if (m_DynamicBox == nullptr) return;
 
+    m_UniformScaling = false;
     m_PressSite = event.pos;
     m_MousePressButton = event.button;
 
@@ -405,7 +430,36 @@ void BoxStyle::MousePressEvent(IEvent event) {
 
 void BoxStyle::LeftButtonPress(IEvent event) {
     if (m_CenterTranslationMode) {
+        m_SelectedItem = IG_NONE;
         auto [rayStart, rayDir] = GetRayStartAndDir(event);
+        if (m_AllowRegionResize) {
+            const auto handle = MeetOpePoint(event, rayStart, rayDir);
+            auto screen = [this](const Point& p) {
+                const auto c = m_MVP * PointToVec4(p);
+                return igm::vec2((c.x / c.w + 1.f) * m_Interactor->GetWidth() * .5f,
+                                 (1.f - c.y / c.w) * m_Interactor->GetHeight() * .5f);
+            };
+            const auto centerDelta = screen(m_DynamicBox->GetMidPoint()) - event.pos;
+            const auto handleDelta = screen(std::get<2>(handle)) - event.pos;
+            if (std::get<0>(handle) && handleDelta.length() < centerDelta.length()) {
+                static constexpr int axes[] = {1, 1, 0, 0, 2, 2};
+                m_SelectedDirection = std::get<1>(handle);
+                const int axis = axes[m_SelectedDirection];
+                m_ResizeBounds = m_DynamicBox->GetExtremePoint();
+                const float extent = std::max(static_cast<double>(m_DynamicBox->GetLength()[axis]), m_MinRegionSize);
+                Point offset = std::get<2>(handle);
+                offset[axis] += extent;
+                m_ResizeScreenAxis = (screen(offset) - screen(std::get<2>(handle))) / extent;
+                // A view-aligned axis cannot be resized reliably in screen space.
+                if (m_ResizeScreenAxis.length() * extent < 2.f) return;
+                m_SelectedItem = IG_POINT;
+                m_BoxDrawMode = IG_POINT;
+                m_BoxDrawModeOpePoint = m_SelectedDirection;
+                ClearDraw();
+                ToDraw();
+                return;
+            }
+        }
         auto meet = MeetCenterPoint(event, rayStart, rayDir);
         if (std::get<0>(meet)) {
             m_SelectedItem = IG_MID_POINT;
@@ -415,6 +469,23 @@ void BoxStyle::LeftButtonPress(IEvent event) {
             return;
         }
     }
+    if (m_AllowBoundaryDrag && m_CenterTranslationMode) {
+        auto [rayStart, rayDir] = GetRayStartAndDir(event);
+        const auto edge = MeetBoxEdge(event, rayStart, rayDir);
+        if (std::get<0>(edge)) {
+            m_SelectedItem = IG_EDGE;
+            const auto clip = m_MVP * PointToVec4(std::get<1>(edge));
+            m_SelectedNDCZ = clip.z / clip.w;
+            const igm::vec2 ndc(2.f * event.pos.x / m_Interactor->GetWidth() - 1.f,
+                                1.f - 2.f * event.pos.y / m_Interactor->GetHeight());
+            auto world = m_InvertedMVP * igm::vec4(ndc, m_SelectedNDCZ, 1.f);
+            world /= world.w;
+            m_PrePosition = Point(world.x, world.y, world.z);
+            m_BoxDrawMode = IG_EDGE;
+            ClearDraw(); ToDraw();
+        }
+        return;
+    }
     if (!m_AllowLeftHandleDrag) return;
     MiddleButtonPress(event);
     // Left drag only adjusts a handle. Middle drag also translates edges.
@@ -422,6 +493,35 @@ void BoxStyle::LeftButtonPress(IEvent event) {
 }
 
 void BoxStyle::MiddleButtonPress(IEvent event) {
+    if (m_ParaViewInteraction && m_CenterTranslationMode) {
+        // ParaView's TranslateAction captures the picked widget, not the camera.
+        LeftButtonPress(event);
+        if (m_SelectedItem == IG_NONE) {
+            auto [rayStart, rayDir] = GetRayStartAndDir(event);
+            const auto face = MeetBoxRotate(event, rayStart, rayDir);
+            if (std::get<0>(face)) {
+                m_SelectedItem = IG_EDGE;
+                const auto clip = m_MVP * PointToVec4(std::get<1>(face));
+                m_SelectedNDCZ = clip.z / clip.w;
+            }
+        }
+        if (m_SelectedItem != IG_NONE) {
+            // Face handles return before setting a depth in LeftButtonPress.
+            // Recompute a stable picked depth for the translation/scale gesture.
+            auto [rayStart, rayDir] = GetRayStartAndDir(event);
+            const auto face = MeetBoxRotate(event, rayStart, rayDir);
+            const Point picked = std::get<0>(face) ? std::get<1>(face) : m_DynamicBox->GetMidPoint();
+            const auto clip = m_MVP * PointToVec4(picked);
+            m_SelectedNDCZ = clip.z / clip.w;
+            m_SelectedItem = IG_EDGE;
+            const igm::vec2 ndc(2.f * event.pos.x / m_Interactor->GetWidth() - 1.f,
+                                1.f - 2.f * event.pos.y / m_Interactor->GetHeight());
+            auto world = m_InvertedMVP * igm::vec4(ndc, m_SelectedNDCZ, 1.f);
+            world /= world.w;
+            m_PrePosition = Point(world.x, world.y, world.z);
+        }
+        return;
+    }
     m_SelectedDirection = -1;
     m_SelectedItem = IG_NONE;
     igm::vec4 intersectionPointV4;
@@ -468,8 +568,14 @@ void BoxStyle::MiddleButtonPress(IEvent event) {
 }
 
 void BoxStyle::RightButtonPress(IEvent event) {
-    //DELETE BOX
-    //UNNEEDED FUNC
+    if (!m_ParaViewInteraction || !m_AllowRegionResize) return;
+    MiddleButtonPress(event);
+    if (m_SelectedItem == IG_NONE) return;
+    m_UniformScaling = true;
+    m_ResizeBounds = m_DynamicBox->GetExtremePoint();
+    m_ScaleStartPoint = m_PrePosition;
+    m_BoxDrawMode = IG_EDGE;
+    ClearDraw(); ToDraw();
 }
 
 void BoxStyle::MouseMoveEvent(IEvent event) {
@@ -493,7 +599,7 @@ void BoxStyle::ChangeBoxDrawMode(IEvent event) {
 
     m_BoxDrawMode = IG_NONE;
 
-    if (!m_CenterTranslationMode && m_BoxDrawMode == IG_NONE) {
+    if ((!m_CenterTranslationMode || m_AllowRegionResize) && m_BoxDrawMode == IG_NONE) {
         //Select Box Ope Point
         auto meet = MeetOpePoint(event, rayStart, rayDir);
         if (std::get<0>(meet)) {
@@ -502,9 +608,18 @@ void BoxStyle::ChangeBoxDrawMode(IEvent event) {
         }
     }
 
-    if (m_CenterTranslationMode && m_BoxDrawMode == IG_NONE) {
+    if (m_CenterTranslationMode) {
         auto meet = MeetCenterPoint(event, rayStart, rayDir);
-        if (std::get<0>(meet)) m_BoxDrawMode = IG_MID_POINT;
+        if (std::get<0>(meet)) {
+            auto distance = [this, &event](const Point& point) {
+                const auto c = m_MVP * PointToVec4(point);
+                return (igm::vec2((c.x / c.w + 1.f) * m_Interactor->GetWidth() * .5f,
+                                  (1.f - c.y / c.w) * m_Interactor->GetHeight() * .5f) - event.pos).length();
+            };
+            if (m_BoxDrawMode != IG_POINT ||
+                distance(m_DynamicBox->GetMidPoint()) <= distance(m_DynamicBox->GetOpePoints()[m_BoxDrawModeOpePoint]))
+                m_BoxDrawMode = IG_MID_POINT;
+        }
     }
 
     if (m_BoxDrawMode == IG_NONE) {
@@ -531,11 +646,57 @@ void BoxStyle::OperateBox(IEvent event) {
     if (!SelectionParameter::Instance().GetHaveBox()) return;
     if (m_SelectedItem == IG_NONE) return;
     if (m_DynamicBox == nullptr) return;
+    if (m_UniformScaling && m_MouseMode == MouseButton::RightButton) {
+        // VTK 9.7.1 vtkBoxRepresentation::Scale: radial distance ratio
+        // at the picked depth, around the fixed box center.
+        const igm::vec2 ndc(2.f * event.pos.x / m_Interactor->GetWidth() - 1.f,
+                            1.f - 2.f * event.pos.y / m_Interactor->GetHeight());
+        auto world = m_InvertedMVP * igm::vec4(ndc, m_SelectedNDCZ, 1.f);
+        world /= world.w;
+        const Point center = (m_ResizeBounds.first + m_ResizeBounds.second) * .5f;
+        const double before = (m_ScaleStartPoint - center).length();
+        if (before <= 1.e-9) return;
+        double factor = (Point(world.x, world.y, world.z) - center).length() / before;
+        const auto size = m_ResizeBounds.second - m_ResizeBounds.first;
+        const double minExtent = std::min({static_cast<double>(size[0]), static_cast<double>(size[1]), static_cast<double>(size[2])});
+        if (minExtent <= 0.) return;
+        factor = std::max(factor, m_MinRegionSize / minExtent);
+        m_DynamicBox = DynamicBox::New(center + (m_ResizeBounds.first - center) * factor,
+                                       center + (m_ResizeBounds.second - center) * factor);
+        PointMoveCallBack(); ClearDraw(); ToDraw();
+        return;
+    }
+    if (m_AllowRegionResize && m_SelectedItem == IG_POINT &&
+        m_MouseMode == MouseButton::LeftButton) {
+        static constexpr int axes[] = {1, 1, 0, 0, 2, 2};
+        static constexpr bool maximum[] = {true, false, false, true, true, false};
+        const int axis = axes[m_SelectedDirection];
+        const auto delta = event.pos - m_PressSite;
+        const double denominator = m_ResizeScreenAxis.x * m_ResizeScreenAxis.x +
+                                   m_ResizeScreenAxis.y * m_ResizeScreenAxis.y;
+        if (denominator <= 0.) return;
+        const double shift = (delta.x * m_ResizeScreenAxis.x + delta.y * m_ResizeScreenAxis.y) / denominator;
+        auto low = m_ResizeBounds.first;
+        auto high = m_ResizeBounds.second;
+        if (maximum[m_SelectedDirection])
+            high[axis] = std::max(static_cast<double>(low[axis]) + m_MinRegionSize,
+                                  static_cast<double>(high[axis]) + shift);
+        else
+            low[axis] = std::min(static_cast<double>(high[axis]) - m_MinRegionSize,
+                                 static_cast<double>(low[axis]) + shift);
+        // Construct directly: the generic DynamicBox setters impose a fixed
+        // 0.01 size and can shift the opposite face when clamping.
+        m_DynamicBox = DynamicBox::New(low, high);
+        PointMoveCallBack();
+        ClearDraw();
+        ToDraw();
+        return;
+    }
     if (m_MouseMode != MouseButton::MiddleButton &&
         !(m_AllowLeftHandleDrag && m_MouseMode == MouseButton::LeftButton &&
           m_SelectedItem == IG_POINT) &&
         !(m_CenterTranslationMode && m_MouseMode == MouseButton::LeftButton &&
-          m_SelectedItem == IG_MID_POINT)) return;
+          (m_SelectedItem == IG_MID_POINT || (m_AllowBoundaryDrag && m_SelectedItem == IG_EDGE)))) return;
 
     igm::vec2 pos = event.pos;
 
@@ -587,6 +748,7 @@ void BoxStyle::MouseReleaseEvent(IEvent event) {
         }
     }
     m_MousePressButton = MouseButton::NoButton;
+    m_UniformScaling = false;
     m_SelectedItem = IG_NONE;
     ChangeBoxDrawMode(event);
 }
@@ -733,6 +895,14 @@ void BoxStyle::ToDraw() {
         painter->SetPen(m_BoxDrawMode == IG_MID_POINT ? 16 : 11);
         painter->SetPen(m_BoxDrawMode == IG_MID_POINT ? Color::Magenta : Color::Orange);
         m_DrawHandles.push_back(painter->DrawPoint(m_DynamicBox->GetMidPoint()));
+        if (m_AllowRegionResize) {
+            for (int i = 0; i < 6; ++i) {
+                const bool hovered = m_BoxDrawMode == IG_POINT && m_BoxDrawModeOpePoint == i;
+                painter->SetPen(hovered ? 15 : 9);
+                painter->SetPen(hovered ? Color::Magenta : Color::Red);
+                m_DrawHandles.push_back(painter->DrawPoint(m_DynamicBox->GetOpePoints()[i]));
+            }
+        }
         return;
     }
 

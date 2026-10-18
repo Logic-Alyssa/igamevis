@@ -1,7 +1,7 @@
 // Regression trigger: the region filter's Preview button was present in code
 // but absent from the launched dialog. Expected: it is visible and clickable,
 // while ordinary filter dialogs retain their two-button layout.
-// Fix: "feat: validate ParaView-style region extraction UI". Find its SHA with
+// Fix: "feat: integrate region extraction with latest main". Find its SHA with
 // git log --diff-filter=A --format="%h %s" -- Examples/Filter/Selection/TestExtractCellsByRegionDialog.cpp
 #include <IQComponents/igQtFilterDialogDockWidget.h>
 #include <QApplication>

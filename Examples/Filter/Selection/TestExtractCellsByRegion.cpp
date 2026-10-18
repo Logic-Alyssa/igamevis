@@ -5,12 +5,13 @@
 // preservation of point/cell arrays. Boundary-only and empty regions matter
 // because they expose strict/intersected and stale-preview mistakes.
 // Fix and test first land together in the commit titled
-// "feat: reproduce ParaView region extraction workflow". Find its real SHA with:
+// "feat: integrate region extraction with latest main". Find its real SHA with:
 // git log --diff-filter=A --format="%h %s" -- Examples/Filter/Selection/TestExtractCellsByRegion.cpp
 #include <Selection/iGameExtractCellsByRegionFilter.h>
 #include <iGameAttributeSet.h>
 #include <iGameFileIO.h>
 #include <iostream>
+#include <cmath>
 #include <vector>
 
 // Run with Examples (or the examples build directory containing Models) as cwd.
@@ -127,9 +128,64 @@ bool Run(const char* path, int inputCells, const std::vector<int>& boxStrict,
 }
 } // namespace
 
+// Regression: remapping polyhedron counts as point IDs corrupts topology;
+// streams longer than 256 also overflowed the fixed buffer. This case forces
+// point compaction and checks both Box/Sphere with an 80-sided prism.
+// Fix: "feat: finalize region controls and polyhedron extraction" (same commit).
+// A polyhedron face stream contains counts as well as point IDs. Its stream
+// also commonly exceeds the fixed size used by tetrahedra/hexahedra.
+bool CheckPolyhedronFaceStream() {
+    using namespace iGame;
+    auto mesh = UnstructuredMesh::New();
+    auto points = Points::New();
+    points->AddPoint(Vector3d(99,99,99)); // unused point forces ID compaction
+    constexpr int sides = 80;
+    for (int layer = 0; layer < 2; ++layer) {
+        for (int i = 0; i < sides; ++i) {
+            const double angle = i * 6.283185307179586 / sides;
+            points->AddPoint(Vector3d(std::cos(angle),std::sin(angle),layer));
+        }
+    }
+    mesh->SetPoints(points);
+    std::vector<igIndex> stream{sides+2, sides};
+    for (int i = sides-1; i >= 0; --i) stream.push_back(i+1);
+    stream.push_back(sides);
+    for (int i = 0; i < sides; ++i) stream.push_back(sides+i+1);
+    for (int i = 0; i < sides; ++i) {
+        const int next = (i+1)%sides;
+        for (int value : {4,i+1,next+1,sides+next+1,sides+i+1}) stream.push_back(value);
+    }
+    mesh->AddCell(stream.data(),static_cast<int>(stream.size()),IG_POLYHEDRON);
+    auto filter = ExtractCellsByRegionFilter::New();
+    filter->SetInput(0,mesh);
+    bool ok = stream.size()>IGAME_CELL_MAX_SIZE;
+    for (bool sphere : {false,true}) {
+        if (sphere) filter->SetSphere(Vector3d(0,0,.5),2);
+        else filter->SetBox(Vector3d(-2,-2,-2),Vector3d(2,2,2));
+        ok = filter->Execute() && ok;
+        auto out = DynamicCast<UnstructuredMesh>(filter->GetOutput());
+        if (out.IsNull() || out->GetNumberOfCells()!=1 || out->GetNumberOfPoints()!=2*sides) return false;
+        const igIndex* result = nullptr;
+        const int n = out->GetCellPointIds(0,result);
+        if (n!=stream.size() || result[0]!=sides+2) return false;
+        int offset = 1;
+        for (int face = 0; face < sides+2; ++face) {
+            const int count = stream[offset];
+            if (result[offset++]!=count) return false;
+            for (int j = 0; j < count; ++j,++offset) {
+                if (result[offset]<0 || result[offset]>=out->GetNumberOfPoints()) return false;
+                if ((points->GetPoint(stream[offset])-out->GetPoints()->GetPoint(result[offset])).squaredNorm()>1e-12) return false;
+            }
+        }
+    }
+    std::cout << (ok ? "PASS " : "FAIL ") << "Polyhedron face counts and large stream preserved\n";
+    return ok;
+}
+
 int main() {
     bool ok = Run("./Models/ExtractCellsByRegion_BoxCases.vtk", 4, {0}, {0, 1, 3});
     ok = Run("./Models/ExtractCellsByRegion_SphereCases.vtk", 5, {0, 4}, {0, 1, 3, 4}) && ok;
+    ok = CheckPolyhedronFaceStream() && ok;
     std::cout << (ok ? "ALL TESTS PASSED\n" : "TESTS FAILED\n");
     return ok ? 0 : 1;
 }

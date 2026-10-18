@@ -4427,7 +4427,7 @@ void igQtMainWindow::initAllFilters() {
         auto* dialog = new igQtFilterDialogDockWidget(this, true);
         dialog->setFilterTitle(title);
         dialog->setFilterDescription(QStringLiteral(
-                "左键拖动线框中心点来移动区域；预览高亮单元，执行后可继续调整。"));
+                "左键拖中心或线框平移，拖红点调整大小；中键平移，右键拖动整体缩放。预览后执行，可继续调整。"));
         dialog->enablePreview(true);
         const int shape = dialog->addParameter(igQtFilterDialogDockWidget::QT_COMBO_BOX,
                 QStringLiteral("区域"), std::vector<QString>{QStringLiteral("Box"), QStringLiteral("Sphere")});
@@ -4456,11 +4456,17 @@ void igQtMainWindow::initAllFilters() {
         session->box->Initialize(interactor);
         session->box->SetAllowRotation(false);
         session->box->SetCenterTranslationMode(true);
+        session->box->SetAllowBoundaryDrag(true);
+        session->box->SetParaViewInteraction(true);
+        session->box->SetAllowRegionResize(true, std::max(scale * 1.e-6, 1.e-7));
         session->sphere = iGame::RadialStyle::New();
         session->sphere->Initialize(interactor);
         session->sphere->SetMoveEndWithStart(true);
         session->sphere->SetShowSphere(true);
         session->sphere->SetCenterTranslationMode(true);
+        session->sphere->SetAllowBoundaryDrag(true);
+        session->sphere->SetParaViewInteraction(true);
+        session->sphere->SetAllowRegionResize(true, std::max(scale * 1.e-6, 1.e-7));
         QPointer<igQtFilterDialogDockWidget> safeDialog(dialog);
 
         auto line = [dialog](int id) { return qobject_cast<QLineEdit*>(dialog->getWidget(id)); };
@@ -4545,6 +4551,8 @@ void igQtMainWindow::initAllFilters() {
             line(x0)->setText(regionNumber(center[0]));
             line(y0)->setText(regionNumber(center[1]));
             line(z0)->setText(regionNumber(center[2]));
+            // Both the left radius handle and ParaView-style right drag resize.
+            line(radius)->setText(regionNumber((session->sphere->GetEndPoint() - center).length()));
             queuePreview();
         });
         auto makeFilter = [=](bool reportError) -> iGame::ExtractCellsByRegionFilter::Pointer {

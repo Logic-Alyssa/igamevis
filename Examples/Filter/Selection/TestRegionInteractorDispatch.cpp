@@ -18,7 +18,7 @@ public:
     void Initialize(iGame::SmartPointer<iGame::Interactor>) override {}
     bool IsInteractionActive() const override { return captured; }
     void MousePressEvent(iGame::IEvent event) override {
-        captured = event.button == iGame::MiddleButton && event.pos.x < 100.f;
+        captured = (event.button == iGame::MiddleButton || event.button == iGame::LeftButton) && event.pos.x < 100.f;
     }
     void MouseMoveEvent(iGame::IEvent) override {
         if (captured) ++moves;
@@ -47,6 +47,13 @@ int main() {
         std::cerr << "Captured middle drag entered default interaction or missed the widget\n";
         return 1;
     }
+    // Regression: left boundary resize must not also rotate the camera.
+    // Fix: ´ýÌá½». Verify the entire captured press-move-release sequence.
+    interactor->FilterEvent({iGame::IEvent::MousePress, iGame::LeftButton, {50.f, 50.f}, 0.});
+    interactor->FilterEvent({iGame::IEvent::MouseMove, iGame::LeftButton, {80.f, 70.f}, 0.});
+    interactor->FilterEvent({iGame::IEvent::MouseRelease, iGame::LeftButton, {80.f, 70.f}, 0.});
+    if (widget->moves != 2 || widget->captured || scene->IsInteracting() ||
+        (camera->GetPosition() - before).length() > 1.e-6f) return 3;
     interactor->FilterEvent({iGame::IEvent::MousePress, iGame::MiddleButton, {300.f, 300.f}, 0.});
     interactor->FilterEvent({iGame::IEvent::MouseMove, iGame::MiddleButton, {330.f, 320.f}, 0.});
     const bool defaultReceivedMove = scene->IsInteracting();
