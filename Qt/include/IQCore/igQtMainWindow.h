@@ -49,7 +49,6 @@ class igQtDeformationWidget;
 class igQtElevationFilterPanel;
 class igQtAiChatWidget;
 class igQtCommandManager;
-class igQtDataSpreadsheetWidget;
 class QFontMetrics;
 class igQtChromeFramelessDialog;
 class igQtPartFocusWidget;
@@ -136,10 +135,6 @@ public:
     // AI Chat DockWidget
     QDockWidget* aiChatDockWidget = nullptr;
     igQtAiChatWidget* aiChatWidget = nullptr;
-
-    // 数据表视图（对标 ParaView Spreadsheet View，菜单「视图」中开关）
-    QDockWidget* DataSpreadsheetDockWidget{nullptr};
-    igQtDataSpreadsheetWidget* DataSpreadsheetWidget{nullptr};
 
     // Command Manager for MCP Server (端口 12345)
     igQtCommandManager* commandManager = nullptr;

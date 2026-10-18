@@ -41,7 +41,7 @@ public:
 
     void AddInput(DataObject::Pointer data);
 
-    // 执行失败时的错误信息（与 ComputeQuartilesFilter 一致）
+    // 执行失败时的错误信息
     std::string GetMessage() const { return m_Message; }
 
 protected:
