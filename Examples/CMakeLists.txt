@@ -752,10 +752,8 @@ igame_add_example(testPerlinNoise Filter/AttributeManipulation/TestPerlinNoise.c
 igame_add_example(testTextureMapToSphere Filter/TextureMapToSphere/TestTextureMapToSphere.cpp)
 igame_add_example(testResampleWithDataSet Filter/TestResampleWithDataSet.cpp)
 
-# Batch 2 filters aligned with ParaView (Append Datasets / Surface Vectors / Compute Quartiles).
-igame_add_example(testAppendDatasets Filter/TestAppendDatasets.cpp)
+# Batch 2 filter aligned with ParaView (Surface Vectors).
 igame_add_example(testSurfaceVectors Filter/TestSurfaceVectors.cpp)
-igame_add_example(testComputeQuartiles Filter/TestComputeQuartiles.cpp)
 
 get_property(IGAME_EXAMPLE_TARGETS DIRECTORY PROPERTY IGAME_EXAMPLE_TARGETS)
 if (NOT IGAME_EXAMPLE_TARGETS)
