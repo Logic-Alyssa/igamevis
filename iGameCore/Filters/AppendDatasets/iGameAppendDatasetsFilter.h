@@ -13,12 +13,6 @@
 
 IGAME_NAMESPACE_BEGIN
 
-// MeshPointMap 跟踪每个输入 mesh 的点/单元在输出 mesh 中的偏移映射
-struct MeshPointMap {
-    std::vector<igIndex> pointMap;
-    igIndex cellOffset{0};
-};
-
 /**
  * AppendDatasetsFilter — 对标 ParaView 的 Append Datasets 滤镜
  * (VTK 类: vtkAppendFilter)
@@ -54,6 +48,13 @@ protected:
     AppendDatasetsFilter();
 
 private:
+    // MeshPointMap 跟踪每个输入 mesh 的点/单元在输出 mesh 中的偏移映射。
+    // 嵌套在类内，避免与上游 AppendReduceFilter 的同名全局 struct 重定义冲突。
+    struct MeshPointMap {
+        std::vector<igIndex> pointMap;
+        igIndex cellOffset{0};
+    };
+
     // 把任意 DataObject 归一为 UnstructuredMesh
     // 对 SurfaceMesh / VolumeMesh / UnstructuredMesh 直接转换；
     // 对 DrawObject / CompositeDataObject 递归收集子数据。

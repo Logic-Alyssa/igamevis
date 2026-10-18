@@ -198,7 +198,7 @@ void AppendDatasetsFilter::AppendMeshWithMerge(
 
 void AppendDatasetsFilter::MergeAttributes(
     const std::vector<UnstructuredMesh::Pointer>& meshes,
-    const std::vector<MeshPointMap>& meshMaps,
+    const std::vector<AppendDatasetsFilter::MeshPointMap>& meshMaps,
     UnstructuredMesh::Pointer outMesh)
 {
     if (meshes.empty() || meshMaps.empty()) return;
@@ -314,7 +314,7 @@ bool AppendDatasetsFilter::Execute() {
     auto outCells = CellArray::New();
     auto outCellTypes = UnsignedIntArray::New();
 
-    std::vector<MeshPointMap> meshMaps(meshes.size());
+    std::vector<AppendDatasetsFilter::MeshPointMap> meshMaps(meshes.size());
 
     if (m_MergePoints) {
         std::unordered_map<int64_t, std::vector<igIndex>> pointHash;
