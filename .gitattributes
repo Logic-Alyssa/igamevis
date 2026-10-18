@@ -54,3 +54,7 @@ Examples/Models/GhostDemo.vtk -filter -diff -merge text
 Examples/Models/Tet_Plane.vtk -filter -diff -merge text
 Examples/Models/AppendArcLength_test.vtk -filter -diff -merge text
 Examples/Models/Histogram_test.vtk -filter -diff -merge text
+
+# Region extraction fixtures are small plain-text models.
+Examples/Models/ExtractCellsByRegion_BoxCases.vtk -filter -diff -merge text
+Examples/Models/ExtractCellsByRegion_SphereCases.vtk -filter -diff -merge text
