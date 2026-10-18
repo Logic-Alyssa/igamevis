@@ -71,12 +71,24 @@ igQtDarkFramelessMessageDialog::igQtDarkFramelessMessageDialog(QWidget* parent, 
     row->addWidget(textLabel, 1);
     root->addLayout(row);
 
+    m_buttonRow = new QHBoxLayout();
+    m_buttonRow->setSpacing(10);
+    m_buttonRow->addStretch(1);
     auto* okButton = new QPushButton(QStringLiteral("确定"), body);
-    root->addWidget(okButton, 0, Qt::AlignRight);
+    m_buttonRow->addWidget(okButton);
+    root->addLayout(m_buttonRow);
 
     connect(okButton, &QPushButton::clicked, this, &igQtDarkFramelessMessageDialog::accept);
 
     setContentWidget(body);
+}
+
+QPushButton* igQtDarkFramelessMessageDialog::addButton(const QString& text) {
+    if (!m_buttonRow) return nullptr;
+    auto* btn = new QPushButton(text, this);
+    // 插到「确定」按钮左侧
+    m_buttonRow->insertWidget(m_buttonRow->count() - 1, btn);
+    return btn;
 }
 
 void igQtShowDarkFramelessMessage(QWidget* parent, const QString& title, const QString& text,
