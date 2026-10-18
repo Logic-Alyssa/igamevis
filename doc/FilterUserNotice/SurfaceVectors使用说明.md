@@ -1,79 +1,79 @@
-# SurfaceVectorsFilter（向量投影到切平面）使用说明
+# SurfaceVectorsFilter（表面向量约束）使用说明
 
 ## 1. 功能说明
 
-SurfaceVectorsFilter 用于将向量属性投影到表面切平面上，去除向量的法向分量，保留切向分量。对标 ParaView 的 **Project Vectors On Surface** Filter。
+SurfaceVectorsFilter 对标 ParaView 的 **Surface Vectors** Filter（VTK 类：`vtkSurfaceVectors`）。
 
-给定一个表面网格和一个向量属性（点向量或单元向量），计算每个点/单元处的表面法向量，然后执行投影：
+将表面网格上的向量属性按选定**约束模式**投影，并把结果**写回同名数组**（替换原值，不新增数组）：
 
-```
-v_tangent = v - (v · n) * n
-```
+| 约束模式 | 公式 | 说明 |
+|----------|------|------|
+| Parallel（默认） | `v' = v - (v·n)·n` | 去除法向分量，保留切向分量 |
+| Perpendicular | `v' = (v·n)·n` | 仅保留法向分量 |
+| PerpendicularScale | 输出标量 `v·n` | 法向投影长度（向量数组变为标量数组） |
 
-其中 v 是原始向量，n 是单位法向量，v_tangent 是投影后的切平面向量。
+其中 `v` 为原始向量，`n` 为该点/单元的单位法向量。
 
-### 核心特性
+### 与 ParaView 完全对齐的口径（依据 ParaView 6.1.1 逐点数值比对）
 
-- **支持点向量和单元向量**：自动识别属性附着类型
-- **面积加权点法向量**：点向量使用相邻面的面积加权平均法向量，结果更光滑
-- **面法向量直接计算**：单元向量使用各面自身的叉积法向量
-- **三角形/四边形/多边形通用**：通过扇形拆分法计算任意多边形面的法向量
-- **输出属性名可自定义**：默认输出名为 `TangentVectors`
+1. **输出写回同名数组**：输出模型中 `Velocity` 的值就是投影结果（替换语义），
+   与 ParaView 行为一致，不新增 `TangentVectors` 之类的独立数组；
+2. **法向计算全链路 double 精度**，仅在写回数组时转 float；
+3. **面法向**：任意多边形单元固定取**前 3 个顶点**计算三角形叉积
+   （不使用 Newell 法、不使用扇形拆分）；
+4. **环绕一致性修正**：BFS 遍历面邻接关系统一环绕方向（对齐 VTK 的 Consistency 行为），
+   相邻面在共享边上顶点方向相同则判定环绕不一致并翻转其法向；
+5. **点法向**：相邻面法向（未归一化，长度∝面积）**面积加权累加**后归一化。
 
 ### 与 ParaView 的对应关系
 
-| 功能 | ParaView | iGameVis |
-|------|----------|----------|
-| 向量投影到表面 | Project Vectors On Surface | SurfaceVectors |
-| 点向量投影 | 支持 | 支持（面积加权法向量） |
-| 单元向量投影 | 支持 | 支持（面法向量） |
-| 投影公式 | v - (v·n)n | v - (v·n)n |
+| 项目 | ParaView Surface Vectors | iGameVis |
+|------|--------------------------|----------|
+| 约束模式 | Parallel / Perpendicular / PerpendicularScale | 三模式完全一致 |
+| 输出命名 | 写回同名数组 | 写回同名数组 |
+| 点向量 / 单元向量 | 均支持 | 均支持 |
+| 法向算法 | 前3顶点叉积 + 一致性修正 + 面积加权 | 逐位对齐（浮点噪声 < 1e-6） |
 
 ---
 
 ## 2. 调用方式
 
-### 2.1 C++ 代码调用
+### 2.1 iGameVis GUI 调用
+
+1. 加载表面模型文件（支持 VTK、OBJ、STL 等格式）；
+2. 确保模型上存在向量属性（点向量或单元向量，维度 ≥ 3）；
+3. 点击顶部菜单 **「算法处理」→「新增filter/第二批」→「Surface Vectors」**；
+4. 参数面板中选择：
+   - **向量属性**：列出所有维度 ≥ 3 的属性（自动标注 Point / Cell）；
+   - **约束模式**：Parallel / Perpendicular / PerpendicularScale；
+5. 点击「应用」执行，结果写回同名数组，新模型节点挂到模型树。
+
+### 2.2 C++ 代码调用
 
 ```cpp
 #include <SurfaceVectors/iGameSurfaceVectorsFilter.h>
 using namespace iGame;
 
-// 1. 创建 Filter
 auto filter = SurfaceVectorsFilter::New();
-
-// 2. 设置输入（表面网格）
 filter->SetInput(surfaceMesh);
 
-// 3. 设置要投影的向量属性（按名称或索引二选一）
+// 1. 指定向量属性（按名称或索引二选一）
 filter->SetVectorAttributeByName("Velocity");
 // 或 filter->SetVectorAttributeByIndex(0);
 
-// 4. （可选）设置输出属性名，默认 "TangentVectors"
-filter->SetOutputAttributeName("TangentVelocity");
+// 2. 设置约束模式（默认 Parallel）
+filter->SetConstraintMode(SurfaceVectorsFilter::Parallel);
+// filter->SetConstraintModeToPerpendicular();
+// filter->SetConstraintModeToPerpendicularScale();
 
-// 5. 执行
 if (filter->Execute()) {
-    auto result = filter->GetOutput();
-    auto outMesh = DynamicCast<SurfaceMesh>(result);
-    // 投影后的向量作为新的向量属性添加到了网格上
-    auto& tangentAttr = outMesh->GetAttributeSet()->GetAttribute("TangentVelocity");
-    // 使用投影后的向量...
+    auto outMesh = DynamicCast<SurfaceMesh>(filter->GetOutput());
+    // 结果写回同名数组："Velocity" 现在的值即为投影结果
+    auto& attr = outMesh->GetAttributeSet()->GetAttribute("Velocity");
 } else {
-    std::string msg = filter->GetMessage();
-    std::cout << "Error: " << msg << std::endl;
+    std::cout << "Error: " << filter->GetMessage() << std::endl;
 }
 ```
-
-### 2.2 iGameVis GUI 调用
-
-在 iGameVis 界面中：
-
-1. 加载表面模型文件（VTK、OBJ、STL 等格式）
-2. 确保模型上有向量属性（点向量或单元向量）
-3. 点击顶部菜单 **「算法处理」→「表面切向向量 (Surface Vectors)」**
-4. 在弹出的参数对话框中选择要投影的向量属性
-5. 点击「应用」执行，投影结果作为新的向量属性添加到模型上
 
 ---
 
@@ -81,85 +81,82 @@ if (filter->Execute()) {
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| VectorAttribute | string / int | - | 要投影的向量属性，按名称或索引指定，必须设置 |
-| OutputAttributeName | string | "TangentVectors" | 输出的切向向量属性名称 |
+| VectorAttribute | string / int | - | 要投影的向量属性（按名称或索引），必须设置 |
+| ConstraintMode | enum | Parallel | Parallel=0（切向）、Perpendicular=1（法向）、PerpendicularScale=2（标量投影） |
 
 ---
 
 ## 4. 使用示例
 
-### 示例 1：点向量投影到切平面
+### 示例 1：切向投影（Parallel，默认）
 
 ```cpp
-// 加载一个带 Velocity 点向量的表面模型
-auto mesh = FileIO::ReadFile("SurfaceVectors_plane.vtk");
+auto mesh = FileIO::ReadFile("SurfaceVectors_C_cylinder.vtk");
 
 auto filter = SurfaceVectorsFilter::New();
 filter->SetInput(mesh);
 filter->SetVectorAttributeByName("Velocity");
-filter->SetOutputAttributeName("TangentVelocity");
+filter->SetConstraintModeToParallel();   // v' = v - (v·n)·n
 filter->Execute();
 
-auto outMesh = DynamicCast<SurfaceMesh>(filter->GetOutput());
-auto attrSet = outMesh->GetAttributeSet();
-int idx = attrSet->GetAttributeIndex("TangentVelocity");
-// idx >= 0 表示投影成功，属性已添加
+// 圆柱面上 Velocity 的径向（法向）分量被去除；
+// 写回后的 Velocity 与法向点积 ≈ 0（浮点噪声 < 1e-6 属正常）
 ```
 
-### 示例 2：单元向量投影
+### 示例 2：仅保留法向分量（Perpendicular）
 
 ```cpp
-filter->SetVectorAttributeByName("CellVector");
-filter->SetOutputAttributeName("CellTangent");
+filter->SetConstraintModeToPerpendicular();  // v' = (v·n)·n
 filter->Execute();
-
-// 输出属性的附着类型与输入一致（单元向量 → 单元属性）
-auto& attr = outMesh->GetAttributeSet()->GetAttribute("CellTangent");
-// attr.attachmentType == IG_CELL
+// 写回后的 Velocity 只剩法向分量，切向分量为 0
 ```
 
-### 示例 3：验证投影的正交性
+### 示例 3：法向投影标量（PerpendicularScale）
 
 ```cpp
-// 投影后的切向量应该与法向量正交（点积为 0）
-auto& tangentAttr = attrSet->GetAttribute("TangentVectors");
-
-// 对于平面网格（法向为 z 方向），投影后 z 分量应接近 0
-float vals[3];
-tangentAttr.pointer->GetElement(0, vals);
-// vals[2] ≈ 0
+filter->SetConstraintModeToPerpendicularScale();  // 输出标量 v·n
+filter->Execute();
+// 注意：此时同名数组由 3 分量向量变为 1 分量标量
 ```
 
 ---
 
 ## 5. 注意事项
 
-### 5.1 法向量计算方法
+### 5.1 输入要求
 
-- **单元向量**：直接用面的叉积法向量。对于多边形面，采用扇形拆分（以第 0 个顶点为中心拆分为多个三角形），累加各三角形的叉积得到整体法向量。
-- **点向量**：面积加权平均法。每个点的法向量由其相邻所有面的法向量（未归一化，长度≈2×面积）累加后归一化得到。面积越大的面对点法向的贡献越大，结果更符合视觉预期。
+- 输入类型支持 `SurfaceMesh` 与 `UnstructuredMesh`（自动提取表面）；
+- 属性维度必须 ≥ 3（向量），标量属性不出现在 GUI 候选列表中；
+- 点向量（IG_POINT）与单元向量（IG_CELL）均支持，附着类型执行后保持不变
+  （PerpendicularScale 模式例外：数组变为 1 分量标量，附着类型不变）。
 
-### 5.2 输入要求
+### 5.2 写回语义（与旧版区别）
 
-- 输入类型支持 `SurfaceMesh` 和 `UnstructuredMesh`（会自动提取表面）
-- 输入属性必须是向量（维度 ≥ 3），标量属性无法投影
-- 支持点向量（IG_POINT）和单元向量（IG_CELL）两种附着类型
-- 非表面类型（VolumeMesh、PointSet 等）会返回错误
+结果**直接替换输入向量数组**（同名写回），不再新增输出数组、
+也没有「输出属性名」配置项——这是与 ParaView 对齐的行为。
+如需保留原始向量，请先自行复制属性再执行。
 
-### 5.3 零法向量处理
+### 5.3 数值精度
 
-对于退化面（所有顶点共线），叉积法向量长度为 0。此时归一化后仍为零向量，投影结果等于原向量（点积为 0，减去的法向分量为 0）。
+- 与 ParaView 对标时，个别点（如球面极点）的向量分量可能存在 < 1e-6 的浮点差异，
+  属不同法向计算路径的正常舍入噪声；核心分量与模长完全一致即判定对齐；
+- 网格环绕方向不一致时（如分块三角化的球面极点带），本 Filter 已做一致性修正；
+  未修正的实现会让点法向偏移 16~26 度。
 
-### 5.4 数值精度
+### 5.4 零法向处理
 
-投影公式在数学上保证 `v_tangent · n = 0`，但由于浮点精度误差，实际点积可能是一个很小的非零值（通常 < 1e-6），属于正常现象。
+退化面（顶点共线）叉积长度为 0，归一化后仍为零向量，
+Parallel 模式下投影结果等于原向量。
 
 ### 5.5 测试模型
 
-`Examples/Models/` 目录下提供了测试模型：
+`Examples/Models/` 目录下提供与 ParaView 逐点比对的测试模型：
 
 | 文件名 | 描述 | 属性 |
 |--------|------|------|
-| SurfaceVectors_plane.vtk | 3×3 平面网格（9 点，4 面），法向为 z 方向 | Velocity（点向量）、CellVector（单元向量） |
+| SurfaceVectors_A_sphere.vtk | 球面（三角形网格，含环绕不一致的极点带） | Velocity 等（点/单元向量） |
+| SurfaceVectors_B_hill.vtk | 山丘曲面（四边形网格） | 点/单元向量 |
+| SurfaceVectors_C_cylinder.vtk | 圆柱面 | 点/单元向量 |
 
-示例代码位于 `Examples/Filter/TestSurfaceVectors.cpp`，包含 5 组测试用例，运行后自动完成全部测试。
+测试代码位于 `Examples/Filter/TestSurfaceVectors.cpp`，共 35 项断言
+（覆盖三模型 × 点/单元 × 三模式的 ParaView 实测真值回归锁），运行后自动输出 PASS/FAIL 统计。
