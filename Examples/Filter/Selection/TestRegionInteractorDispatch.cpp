@@ -1,7 +1,7 @@
 // Regression trigger: middle drag on a region handle also moved the camera.
 // Expected: press-move-release captured by a special widget does not enter the
 // default scene interaction, while a middle drag away still reaches it.
-// Fix: "feat: validate ParaView-style region extraction UI". Find its SHA with
+// Fix: "feat: integrate region extraction with latest main". Find its SHA with
 // git log --diff-filter=A --format="%h %s" -- Examples/Filter/Selection/TestRegionInteractorDispatch.cpp
 #include <iGameCamera.h>
 #include <iGameInteractor.h>
@@ -48,7 +48,7 @@ int main() {
         return 1;
     }
     // Regression: left boundary resize must not also rotate the camera.
-    // Fix: ´ýÌá½». Verify the entire captured press-move-release sequence.
+    // Fix: 1021f58. Verify the entire captured press-move-release sequence.
     interactor->FilterEvent({iGame::IEvent::MousePress, iGame::LeftButton, {50.f, 50.f}, 0.});
     interactor->FilterEvent({iGame::IEvent::MouseMove, iGame::LeftButton, {80.f, 70.f}, 0.});
     interactor->FilterEvent({iGame::IEvent::MouseRelease, iGame::LeftButton, {80.f, 70.f}, 0.});
