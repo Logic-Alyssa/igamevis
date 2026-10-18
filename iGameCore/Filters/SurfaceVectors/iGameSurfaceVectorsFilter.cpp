@@ -5,6 +5,8 @@
 #include <cmath>
 #include <iostream>
 #include <vector>
+#include <map>
+#include <queue>
 
 IGAME_NAMESPACE_BEGIN
 
@@ -13,9 +15,51 @@ SurfaceVectorsFilter::SurfaceVectorsFilter() {
     SetNumberOfOutputs(1);
 }
 
-std::array<float, 3> SurfaceVectorsFilter::ComputeFaceNormal(
-    SurfaceMesh::Pointer mesh, igIndex faceId) {
-    std::array<float, 3> normal = {0.0f, 0.0f, 0.0f};
+std::vector<char> SurfaceVectorsFilter::ComputeConsistencyFlips(SurfaceMesh::Pointer mesh) {
+    auto faces = mesh->GetFaces();
+    IGsize numFaces = faces->GetNumberOfCells();
+    std::vector<char> flips(numFaces, -1); // -1 = 未访问
+
+    // 边表：无向边 (min,max) -> [(faceId, 边在面环绕中方向是否与 (min,max) 一致)]
+    std::map<std::pair<igIndex, igIndex>, std::vector<std::pair<IGsize, bool>>> edgeMap;
+    for (IGsize f = 0; f < numFaces; f++) {
+        const igIndex* ids = nullptr;
+        int numIds = faces->GetCellIds(f, ids);
+        for (int i = 0; i < numIds; i++) {
+            igIndex a = ids[i], b = ids[(i + 1) % numIds];
+            auto key = std::minmax(a, b);
+            edgeMap[key].emplace_back(f, a == key.first);
+        }
+    }
+
+    // BFS：共享边方向相同 -> 邻面环绕不一致（翻转标记取反）
+    std::queue<IGsize> queue;
+    for (IGsize seed = 0; seed < numFaces; seed++) {
+        if (flips[seed] != -1) continue;
+        flips[seed] = 0;
+        queue.push(seed);
+        while (!queue.empty()) {
+            IGsize f = queue.front();
+            queue.pop();
+            const igIndex* ids = nullptr;
+            int numIds = faces->GetCellIds(f, ids);
+            for (int i = 0; i < numIds; i++) {
+                igIndex a = ids[i], b = ids[(i + 1) % numIds];
+                auto key = std::minmax(a, b);
+                bool dirSameF = (a == key.first);
+                for (const auto& [g, dirSameG] : edgeMap[key]) {
+                    if (g == f || flips[g] != -1) continue;
+                    flips[g] = (dirSameF == dirSameG) ? (flips[f] ^ 1) : flips[f];
+                    queue.push(g);
+                }
+            }
+        }
+    }
+    return flips;
+}
+
+std::array<double, 3> SurfaceVectorsFilter::ComputeFaceNormal(SurfaceMesh::Pointer mesh, igIndex faceId) {
+    std::array<double, 3> normal = {0.0, 0.0, 0.0};
     if (!mesh) return normal;
 
     auto points = mesh->GetPoints();
@@ -26,29 +70,26 @@ std::array<float, 3> SurfaceVectorsFilter::ComputeFaceNormal(
     int numIds = faces->GetCellIds(faceId, ids);
     if (numIds < 3) return normal;
 
-    // 用第0个顶点作为基准，累加所有三角形的法向量（扇形拆分）
-    Point p0 = points->GetPoint(ids[0]);
-    for (int i = 2; i < numIds; i++) {
-        Point p1 = points->GetPoint(ids[i - 1]);
-        Point p2 = points->GetPoint(ids[i]);
-
-        float e1x = p1[0] - p0[0], e1y = p1[1] - p0[1], e1z = p1[2] - p0[2];
-        float e2x = p2[0] - p0[0], e2y = p2[1] - p0[1], e2z = p2[2] - p0[2];
-
-        float cx = e1y * e2z - e1z * e2y;
-        float cy = e1z * e2x - e1x * e2z;
-        float cz = e1x * e2y - e1y * e2x;
-
-        normal[0] += cx;
-        normal[1] += cy;
-        normal[2] += cz;
+    // 与 VTK vtkSurfaceVectors 一致（经 pvpython 单 quad 受控实验逐位验证）：
+    // 任意多边形 cell 的法向 = 前 3 顶点 (0,1,2) 构成的三角形叉积，
+    // 不做 Newell、不做完整扇形拆分。非平面 quad 上两者差异可达 1e-4 量级
+    double e1x = 0, e1y = 0, e1z = 0, e2x = 0, e2y = 0, e2z = 0;
+    {
+        Point p0 = points->GetPoint(ids[0]);
+        Point p1 = points->GetPoint(ids[1]);
+        Point p2 = points->GetPoint(ids[2]);
+        e1x = (double)p1[0] - p0[0]; e1y = (double)p1[1] - p0[1]; e1z = (double)p1[2] - p0[2];
+        e2x = (double)p2[0] - p0[0]; e2y = (double)p2[1] - p0[1]; e2z = (double)p2[2] - p0[2];
     }
-    return normal; // 未归一化，长度 ≈ 2*面积
+    normal[0] = e1y * e2z - e1z * e2y;
+    normal[1] = e1z * e2x - e1x * e2z;
+    normal[2] = e1x * e2y - e1y * e2x;
+    return normal; // 未归一化，长度 = 2*三角形面积（面积加权语义）
 }
 
 bool SurfaceVectorsFilter::ComputePointNormals(
     SurfaceMesh::Pointer mesh,
-    std::vector<std::array<float, 3>>& outNormals) {
+    std::vector<std::array<double, 3>>& outNormals) {
     if (!mesh) return false;
 
     auto points = mesh->GetPoints();
@@ -58,11 +99,21 @@ bool SurfaceVectorsFilter::ComputePointNormals(
     IGsize numPoints = points->GetNumberOfPoints();
     IGsize numFaces = faces->GetNumberOfCells();
 
-    outNormals.assign(numPoints, {0.0f, 0.0f, 0.0f});
+    outNormals.assign(numPoints, {0.0, 0.0, 0.0});
 
-    // 累加每个相邻面的法向量（面积加权，因为 ComputeFaceNormal 返回的是面积叉积）
+    // 与 VTK vtkSurfaceVectors 一致（经 pvpython 实测逐位验证）：
+    // 先做环绕一致性修正（Consistency），再累加【未归一化】面法向叉积
+    // （面积加权），最后统一归一化。
+    // 注意：vtkPolyDataNormals 是等权单位法向累加，与 vtkSurfaceVectors 不同，
+    // 不能作为本 filter 的真值来源
+    const std::vector<char> flips = ComputeConsistencyFlips(mesh);
     for (IGsize f = 0; f < numFaces; f++) {
         auto faceNormal = ComputeFaceNormal(mesh, f);
+        if (flips[f]) {
+            faceNormal[0] = -faceNormal[0];
+            faceNormal[1] = -faceNormal[1];
+            faceNormal[2] = -faceNormal[2];
+        }
 
         const igIndex* ids = nullptr;
         int numIds = faces->GetCellIds(f, ids);
@@ -84,10 +135,10 @@ bool SurfaceVectorsFilter::ComputePointNormals(
     return true;
 }
 
-void SurfaceVectorsFilter::Normalize(std::array<float, 3>& v) {
-    float len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-    if (len > 1e-12f) {
-        float invLen = 1.0f / len;
+void SurfaceVectorsFilter::Normalize(std::array<double, 3>& v) {
+    double len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (len > 1e-300) {
+        double invLen = 1.0 / len;
         v[0] *= invLen;
         v[1] *= invLen;
         v[2] *= invLen;
@@ -149,10 +200,12 @@ bool SurfaceVectorsFilter::Execute() {
 
     IGenum attachmentType = attr.attachmentType;
     IGsize numElements = vecArray->GetNumberOfElements();
+    // 与 ParaView vtkSurfaceVectors 一致：结果写回输入向量的同名数组（替换原值）
+    const std::string outAttrName = vecArray->GetName();
 
     // 创建输出数组
     FloatArray::Pointer outArray = FloatArray::New();
-    outArray->SetName(m_OutputAttrName);
+    outArray->SetName(outAttrName);
     outArray->SetDimension(3);
     outArray->Reserve(numElements);
 
@@ -165,29 +218,68 @@ bool SurfaceVectorsFilter::Execute() {
             m_Message = "SurfaceVectorsFilter: cell attribute size mismatch.";
             return false;
         }
+        const std::vector<char> cellFlips = ComputeConsistencyFlips(surfaceMesh);
+
+        // PerpendicularScale 模式输出标量，单独建数组（同名，与 ParaView 一致）
+        FloatArray::Pointer scalarOutArray = nullptr;
+        if (m_ConstraintMode == PerpendicularScale) {
+            scalarOutArray = FloatArray::New();
+            scalarOutArray->SetName(outAttrName);
+            scalarOutArray->SetDimension(1);
+            scalarOutArray->Reserve(numElements);
+        }
 
         for (IGsize i = 0; i < numFaces; i++) {
             auto normal = ComputeFaceNormal(surfaceMesh, i);
             Normalize(normal);
+            // 环绕一致性修正（与点法向分支同一套 flips，对齐 VTK 行为）
+            if (cellFlips[i]) {
+                normal[0] = -normal[0];
+                normal[1] = -normal[1];
+                normal[2] = -normal[2];
+            }
 
             vecArray->GetElement(i, vecBuf.data());
 
             // 点积 = v·n
-            float dot = vecBuf[0] * normal[0] + vecBuf[1] * normal[1] + vecBuf[2] * normal[2];
+            double dot = (double)vecBuf[0] * normal[0] + (double)vecBuf[1] * normal[1] +
+                         (double)vecBuf[2] * normal[2];
 
-            // v_tangent = v - (v·n) * n
-            float tx = vecBuf[0] - dot * normal[0];
-            float ty = vecBuf[1] - dot * normal[1];
-            float tz = vecBuf[2] - dot * normal[2];
-
-            outArray->AddElement3(tx, ty, tz);
+            if (m_ConstraintMode == Parallel) {
+                // v' = v - (v·n) * n
+                double tx = (double)vecBuf[0] - dot * normal[0];
+                double ty = (double)vecBuf[1] - dot * normal[1];
+                double tz = (double)vecBuf[2] - dot * normal[2];
+                outArray->AddElement3((float)tx, (float)ty, (float)tz);
+            } else if (m_ConstraintMode == Perpendicular) {
+                // v' = (v·n) * n
+                double tx = dot * normal[0];
+                double ty = dot * normal[1];
+                double tz = dot * normal[2];
+                outArray->AddElement3((float)tx, (float)ty, (float)tz);
+            } else {
+                // PerpendicularScale: 输出标量 = v·n
+                float dotF = (float)dot;
+                scalarOutArray->AddElement(&dotF);
+            }
         }
 
-        attrSet->AddAttribute(IG_VECTOR, IG_CELL, outArray);
+        // 原位替换数组指针：attrSet 结构与索引不变，避免留下空指针项
+        // （旧数组由智能指针自动释放，持有其副本的调用方仍安全）
+        {
+            auto& outAttr = attrSet->GetAttribute(static_cast<IGsize>(attrIndex));
+            if (m_ConstraintMode == PerpendicularScale) {
+                outAttr.pointer = scalarOutArray;
+                outAttr.type = IG_SCALAR; // 3 维向量变为 1 维标量
+            } else {
+                outAttr.pointer = outArray;
+            }
+            outAttr.UpdateAllDataRange(); // 值已变化，重算数值范围供渲染色标使用
+        }
 
     } else if (attachmentType == IG_POINT) {
         // ========== 点向量：面积加权平均得到点法向量 ==========
-        std::vector<std::array<float, 3>> pointNormals;
+        std::vector<std::array<double, 3>> pointNormals;
         if (!ComputePointNormals(surfaceMesh, pointNormals)) {
             m_Message = "SurfaceVectorsFilter: failed to compute point normals.";
             return false;
@@ -199,21 +291,48 @@ bool SurfaceVectorsFilter::Execute() {
             return false;
         }
 
+        FloatArray::Pointer scalarOutArray = nullptr;
+        if (m_ConstraintMode == PerpendicularScale) {
+            scalarOutArray = FloatArray::New();
+            scalarOutArray->SetName(outAttrName);
+            scalarOutArray->SetDimension(1);
+            scalarOutArray->Reserve(numElements);
+        }
+
         for (IGsize i = 0; i < numPoints; i++) {
             const auto& normal = pointNormals[i];
 
             vecArray->GetElement(i, vecBuf.data());
 
-            float dot = vecBuf[0] * normal[0] + vecBuf[1] * normal[1] + vecBuf[2] * normal[2];
+            double dot = (double)vecBuf[0] * normal[0] + (double)vecBuf[1] * normal[1] +
+                         (double)vecBuf[2] * normal[2];
 
-            float tx = vecBuf[0] - dot * normal[0];
-            float ty = vecBuf[1] - dot * normal[1];
-            float tz = vecBuf[2] - dot * normal[2];
-
-            outArray->AddElement3(tx, ty, tz);
+            if (m_ConstraintMode == Parallel) {
+                double tx = (double)vecBuf[0] - dot * normal[0];
+                double ty = (double)vecBuf[1] - dot * normal[1];
+                double tz = (double)vecBuf[2] - dot * normal[2];
+                outArray->AddElement3((float)tx, (float)ty, (float)tz);
+            } else if (m_ConstraintMode == Perpendicular) {
+                double tx = dot * normal[0];
+                double ty = dot * normal[1];
+                double tz = dot * normal[2];
+                outArray->AddElement3((float)tx, (float)ty, (float)tz);
+            } else {
+                float dotF = (float)dot;
+                scalarOutArray->AddElement(&dotF);
+            }
         }
 
-        attrSet->AddAttribute(IG_VECTOR, IG_POINT, outArray);
+        {
+            auto& outAttr = attrSet->GetAttribute(static_cast<IGsize>(attrIndex));
+            if (m_ConstraintMode == PerpendicularScale) {
+                outAttr.pointer = scalarOutArray;
+                outAttr.type = IG_SCALAR;
+            } else {
+                outAttr.pointer = outArray;
+            }
+            outAttr.UpdateAllDataRange();
+        }
 
     } else {
         m_Message = "SurfaceVectorsFilter: unsupported attribute attachment type.";
@@ -222,8 +341,13 @@ bool SurfaceVectorsFilter::Execute() {
 
     attrSet->ForceReConvertToDrawableData();
 
-    std::cout << "[SurfaceVectorsFilter] Projected '" << vecArray->GetName()
-              << "' to tangent plane -> '" << m_OutputAttrName << "'" << std::endl;
+    const char* modeName =
+        m_ConstraintMode == Parallel ? "Parallel" :
+        m_ConstraintMode == Perpendicular ? "Perpendicular" : "PerpendicularScale";
+
+    std::cout << "[SurfaceVectorsFilter] Projected '" << outAttrName
+              << "' mode=" << modeName
+              << " -> written back to '" << outAttrName << "'" << std::endl;
     std::cout << "  Elements: " << numElements
               << ", Type: " << (attachmentType == IG_POINT ? "point" : "cell")
               << std::endl;

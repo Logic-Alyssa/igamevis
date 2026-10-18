@@ -20,7 +20,7 @@ else ()
     set(_IGAME_EXAMPLE_CORE_LIBS ${IGAMEVIS_CORE_LIB_TARGETS})
 endif ()
 
-find_package(HDF5 REQUIRED)
+find_package(HDF5)
 find_package(FFMPEG QUIET)
 find_package(AbqSDK QUIET)
 find_package(OpenMP QUIET)
@@ -154,7 +154,11 @@ function(igame_add_example EXAMPLE_TARGET SOURCE)
 endfunction()
 
 function(igame_link_standard_example EXAMPLE_TARGET)
-    target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS} HDF5::HDF5)
+    if (TARGET HDF5::HDF5)
+        target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS} HDF5::HDF5)
+    else ()
+        target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS})
+    endif ()
 endfunction()
 
 function(igame_register_example_test EXAMPLE_TARGET)
@@ -253,8 +257,9 @@ igame_add_example(testAxisAlignedReflection Filter/AxisAlignedReflection/TestAxi
 
 # My Filters
 igame_add_example(testCellCenterFilter Filter/MyFilter/TestCellCenterFilter.cpp)
-igame_add_example(testAppendReduce Filter/TestAppendReduce.cpp)
+igame_add_example(testAppendDatasets Filter/TestAppendDatasets.cpp)
 igame_add_example(testSurfaceVectors Filter/TestSurfaceVectors.cpp)
+igame_add_example(testComputeQuartiles Filter/TestComputeQuartiles.cpp)
 igame_add_example(testAppendLocationAttributeFilter Filter/TestAppendLocationAttribute.cpp)
 
 # Force Static Mesh

@@ -1,22 +1,25 @@
-﻿#include "iGameAppendReduceFilter.h"
-#include "Convert/iGameConvertToSurfaceMeshFilter.h"
+﻿#include "iGameAppendDatasetsFilter.h"
+#include "iGameAttributeSet.h"
+#include "iGameFlatArray.h"  // UnsignedIntArray (via iGameNewDataArrayMacro)
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <set>
+#include <vector>
 
 IGAME_NAMESPACE_BEGIN
 
-AppendReduceFilter::AppendReduceFilter()
-    : m_MergePoints(true)
-    , m_Tolerance(1e-6f)
+AppendDatasetsFilter::AppendDatasetsFilter()
+    : m_MergePoints(false)
+    , m_Tolerance(0.0f)
 {
     this->SetNumberOfInputs(1);
     this->SetNumberOfOutputs(1);
 }
 
-AppendReduceFilter::~AppendReduceFilter() = default;
+AppendDatasetsFilter::~AppendDatasetsFilter() = default;
 
-void AppendReduceFilter::AddInput(DataObject::Pointer data) {
+void AppendDatasetsFilter::AddInput(DataObject::Pointer data) {
     int n = this->GetNumberOfInputs();
     if (n == 1 && this->GetInput(0) == nullptr) {
         this->SetInput(0, data);
@@ -26,36 +29,24 @@ void AppendReduceFilter::AddInput(DataObject::Pointer data) {
     }
 }
 
-void AppendReduceFilter::CollectMeshes(DataObject::Pointer obj,
-                                        std::vector<SurfaceMesh::Pointer>& meshes) {
+void AppendDatasetsFilter::CollectMeshes(DataObject::Pointer obj,
+                                        std::vector<UnstructuredMesh::Pointer>& meshes) {
     if (!obj) return;
 
     IGenum type = obj->GetDataObjectType();
 
-    if (type == IG_SURFACE_MESH) {
-        auto mesh = DynamicCast<SurfaceMesh>(obj);
-        if (mesh) meshes.push_back(mesh);
-    } else if (type == IG_VOLUME_MESH || type == IG_UNSTRUCTURED_MESH || type == IG_STRUCTURED_MESH) {
-        auto converter = ConvertToSurfaceMeshFilter::New();
-        converter->SetInput(obj);
-        converter->SetConvertMethod(ConvertToSurfaceMeshFilter::IG_EXTRACT_SURFACE_MESH);
-        if (!converter->Execute()) {
-            converter->SetConvertMethod(ConvertToSurfaceMeshFilter::IG_EXTRACT_SURFACE_CELL);
-            if (!converter->Execute()) {
-                converter->SetConvertMethod(ConvertToSurfaceMeshFilter::IG_CONVERT_SURFACE_MESH);
-                converter->Execute();
-            }
-        }
-        auto smesh = converter->GetSurfaceMesh();
-        if (smesh) meshes.push_back(smesh);
+    if (type == IG_SURFACE_MESH || type == IG_VOLUME_MESH || type == IG_UNSTRUCTURED_MESH) {
+        // 直接归一为 UnstructuredMesh（保留原始 cell 类型）
+        auto um = UnstructuredMesh::TransDataObjToUnstructuredMesh(obj);
+        if (um) meshes.push_back(um);
     } else if (type == IG_DRAW_OBJECT) {
         auto drawObj = DynamicCast<DrawObject>(obj);
         if (drawObj) {
             auto renderable = drawObj->GetRenderableObject();
             if (renderable && renderable.GetPointer() != obj.GetPointer()) {
-                auto smesh = DynamicCast<SurfaceMesh>(renderable);
-                if (smesh) {
-                    meshes.push_back(smesh);
+                auto um = DynamicCast<UnstructuredMesh>(renderable);
+                if (um) {
+                    meshes.push_back(um);
                 } else {
                     CollectMeshes(renderable, meshes);
                 }
@@ -75,17 +66,22 @@ void AppendReduceFilter::CollectMeshes(DataObject::Pointer obj,
             }
         }
     }
+    // IG_STRUCTURED_MESH / IG_POINT_SET 等暂不支持（与 vtkAppendFilter
+    // 仅处理 vtkDataSet 的范围一致）
 }
 
-void AppendReduceFilter::AppendMeshSimple(SurfaceMesh::Pointer src,
-                                           Points::Pointer outPoints,
-                                           CellArray::Pointer outFaces,
-                                           igIndex& pointOffset,
-                                           std::vector<igIndex>& pointMap) {
+void AppendDatasetsFilter::AppendMeshSimple(
+    UnstructuredMesh::Pointer src,
+    Points::Pointer outPoints,
+    CellArray::Pointer outCells,
+    UnsignedIntArray::Pointer outCellTypes,
+    igIndex& pointOffset,
+    std::vector<igIndex>& pointMap)
+{
     if (!src) return;
 
     auto srcPoints = src->GetPoints();
-    auto srcFaces = src->GetFaces();
+    auto srcCells = src->GetCells();
     if (!srcPoints) return;
 
     IGsize numPoints = srcPoints->GetNumberOfPoints();
@@ -96,49 +92,65 @@ void AppendReduceFilter::AppendMeshSimple(SurfaceMesh::Pointer src,
         outPoints->AddPoint(p);
         pointMap[i] = pointOffset + (igIndex)i;
     }
-    if (!srcFaces) {
-        pointOffset += (igIndex)numPoints;
-        return;
-    }
-    IGsize numFaces = srcFaces->GetNumberOfCells();
-    for (IGsize f = 0; f < numFaces; f++) {
-        const igIndex* ids = nullptr;
-        int numIds = srcFaces->GetCellIds(f, ids);
 
-        std::vector<igIndex> adjustedIds(numIds);
-        for (int i = 0; i < numIds; i++) {
-            adjustedIds[i] = ids[i] + pointOffset;
+    if (srcCells) {
+        IGsize numCells = srcCells->GetNumberOfCells();
+        for (IGsize c = 0; c < numCells; c++) {
+            // 多面体等变长单元连接表可能超 IGAME_CELL_MAX_SIZE(256)，
+            // 用动态缓冲避免越界（参照 CountCellVerticesFilter 的做法）
+            const IGuint needed = srcCells->GetCellSize(c);
+            std::vector<igIndex> ids(needed > 0 ? static_cast<size_t>(needed) : 1, 0);
+            const int numIds = srcCells->GetCellIds(c, ids.data());
+
+            std::vector<igIndex> adjustedIds(numIds);
+            for (int i = 0; i < numIds; i++) {
+                adjustedIds[i] = ids[i] + pointOffset;
+            }
+            outCells->AddCellIds(adjustedIds.data(), numIds);
+            outCellTypes->AddValue(src->GetCellType(c));
         }
-        outFaces->AddCellIds(adjustedIds.data(), numIds);
     }
     pointOffset += (igIndex)numPoints;
 }
 
-void AppendReduceFilter::AppendMeshWithMerge(
-    SurfaceMesh::Pointer src,
+void AppendDatasetsFilter::AppendMeshWithMerge(
+    UnstructuredMesh::Pointer src,
     Points::Pointer outPoints,
-    CellArray::Pointer outFaces,
+    CellArray::Pointer outCells,
+    UnsignedIntArray::Pointer outCellTypes,
     std::unordered_map<int64_t, std::vector<igIndex>>& pointHash,
     std::vector<igIndex>& pointMap)
 {
     if (!src) return;
 
     auto srcPoints = src->GetPoints();
-    auto srcFaces = src->GetFaces();
+    auto srcCells = src->GetCells();
     if (!srcPoints) return;
 
     IGsize numPoints = srcPoints->GetNumberOfPoints();
     pointMap.resize(numPoints);
 
-    float invTol = 1.0f / m_Tolerance;
-    float tol2 = m_Tolerance * m_Tolerance;
+    // ParaView 语义：Tolerance=0 时仅合并坐标完全一致的点（精确匹配），
+    // 此时不能再用 1/tol 量化哈希（除零），改用坐标比特位做哈希键。
+    const bool exactMerge = (m_Tolerance <= 0.0f);
+    const float invTol = exactMerge ? 1.0f : 1.0f / m_Tolerance;
+    const float tol2 = m_Tolerance * m_Tolerance;
 
     for (IGsize i = 0; i < numPoints; i++) {
         const Point& p = srcPoints->GetPoint(i);
 
-        int64_t ix = (int64_t)(p[0] * invTol);
-        int64_t iy = (int64_t)(p[1] * invTol);
-        int64_t iz = (int64_t)(p[2] * invTol);
+        int64_t ix, iy, iz;
+        if (exactMerge) {
+            uint32_t bx, by, bz;
+            std::memcpy(&bx, &p[0], sizeof(float));
+            std::memcpy(&by, &p[1], sizeof(float));
+            std::memcpy(&bz, &p[2], sizeof(float));
+            ix = bx; iy = by; iz = bz;
+        } else {
+            ix = (int64_t)(p[0] * invTol);
+            iy = (int64_t)(p[1] * invTol);
+            iz = (int64_t)(p[2] * invTol);
+        }
         int64_t key = (ix * 73856093LL) ^ (iy * 19349663LL) ^ (iz * 83492791LL);
 
         bool found = false;
@@ -149,7 +161,10 @@ void AppendReduceFilter::AppendMeshWithMerge(
                 float dx = p[0] - existing[0];
                 float dy = p[1] - existing[1];
                 float dz = p[2] - existing[2];
-                if (dx * dx + dy * dy + dz * dz < tol2) {
+                const bool match = exactMerge
+                        ? (dx == 0.0f && dy == 0.0f && dz == 0.0f)
+                        : (dx * dx + dy * dy + dz * dz < tol2);
+                if (match) {
                     pointMap[i] = existingIdx;
                     found = true;
                     break;
@@ -164,25 +179,27 @@ void AppendReduceFilter::AppendMeshWithMerge(
         }
     }
 
-    if (!srcFaces) return;
+    if (srcCells) {
+        IGsize numCells = srcCells->GetNumberOfCells();
+        for (IGsize c = 0; c < numCells; c++) {
+            const IGuint needed = srcCells->GetCellSize(c);
+            std::vector<igIndex> ids(needed > 0 ? static_cast<size_t>(needed) : 1, 0);
+            const int numIds = srcCells->GetCellIds(c, ids.data());
 
-    IGsize numFaces = srcFaces->GetNumberOfCells();
-    for (IGsize f = 0; f < numFaces; f++) {
-        const igIndex* ids = nullptr;
-        int numIds = srcFaces->GetCellIds(f, ids);
-
-        std::vector<igIndex> mappedIds(numIds);
-        for (int i = 0; i < numIds; i++) {
-            mappedIds[i] = pointMap[ids[i]];
+            std::vector<igIndex> mappedIds(numIds);
+            for (int i = 0; i < numIds; i++) {
+                mappedIds[i] = pointMap[ids[i]];
+            }
+            outCells->AddCellIds(mappedIds.data(), numIds);
+            outCellTypes->AddValue(src->GetCellType(c));
         }
-        outFaces->AddCellIds(mappedIds.data(), numIds);
     }
 }
 
-void AppendReduceFilter::MergeAttributes(
-    const std::vector<SurfaceMesh::Pointer>& meshes,
+void AppendDatasetsFilter::MergeAttributes(
+    const std::vector<UnstructuredMesh::Pointer>& meshes,
     const std::vector<MeshPointMap>& meshMaps,
-    SurfaceMesh::Pointer outMesh)
+    UnstructuredMesh::Pointer outMesh)
 {
     if (meshes.empty() || meshMaps.empty()) return;
 
@@ -218,10 +235,11 @@ void AppendReduceFilter::MergeAttributes(
     }
 
     IGsize numOutPoints = outMesh->GetNumberOfPoints();
-    IGsize numOutFaces = outMesh->GetFaces() ? outMesh->GetFaces()->GetNumberOfCells() : 0;
+    IGsize numOutCells = outMesh->GetNumberOfCells();
 
     int mergedCount = 0;
     for (auto& [key, count] : attrCount) {
+        // 仅保留所有输入都具备的属性（与 vtkAppendFilter 一致）
         if (count < (int)meshes.size()) continue;
 
         FloatArray::Pointer outArray = FloatArray::New();
@@ -240,7 +258,7 @@ void AppendReduceFilter::MergeAttributes(
         }
 
         outArray->SetDimension(dim);
-        IGsize numElements = (key.attachmentType == IG_POINT) ? numOutPoints : numOutFaces;
+        IGsize numElements = (key.attachmentType == IG_POINT) ? numOutPoints : numOutCells;
         outArray->Resize(numElements);
 
         for (size_t m = 0; m < meshes.size(); m++) {
@@ -250,7 +268,6 @@ void AppendReduceFilter::MergeAttributes(
             auto& attr = attrSet->GetAttribute(key.name, key.type);
             if (attr.IsNone()) continue;
 
-            int srcDim = attr.pointer->GetDimension();
             IGsize srcNum = attr.pointer->GetNumberOfElements();
 
             if (key.attachmentType == IG_POINT) {
@@ -262,9 +279,9 @@ void AppendReduceFilter::MergeAttributes(
                     outArray->SetElement(outIdx, elemBuf.data());
                 }
             } else {
-                igIndex faceOff = meshMaps[m].faceOffset;
+                igIndex cellOff = meshMaps[m].cellOffset;
                 for (IGsize i = 0; i < srcNum; i++) {
-                    igIndex outIdx = faceOff + (igIndex)i;
+                    igIndex outIdx = cellOff + (igIndex)i;
                     if (outIdx < 0 || outIdx >= (igIndex)numElements) continue;
                     attr.pointer->GetElement(i, elemBuf.data());
                     outArray->SetElement(outIdx, elemBuf.data());
@@ -277,8 +294,8 @@ void AppendReduceFilter::MergeAttributes(
     }
 }
 
-bool AppendReduceFilter::Execute() {
-    std::vector<SurfaceMesh::Pointer> meshes;
+bool AppendDatasetsFilter::Execute() {
+    std::vector<UnstructuredMesh::Pointer> meshes;
     int inputCount = this->GetNumberOfInputs();
     for (int i = 0; i < inputCount; i++) {
         auto input = this->GetInput(i);
@@ -288,12 +305,14 @@ bool AppendReduceFilter::Execute() {
     }
 
     if (meshes.empty()) {
+        m_Message = "No appendable datasets on input (need surface/volume/unstructured mesh).";
         return false;
     }
 
-    auto outMesh = SurfaceMesh::New();
+    auto outMesh = UnstructuredMesh::New();
     auto outPoints = Points::New();
-    auto outFaces = CellArray::New();
+    auto outCells = CellArray::New();
+    auto outCellTypes = UnsignedIntArray::New();
 
     std::vector<MeshPointMap> meshMaps(meshes.size());
 
@@ -302,26 +321,28 @@ bool AppendReduceFilter::Execute() {
         pointHash.reserve(1024);
 
         for (size_t i = 0; i < meshes.size(); i++) {
-            AppendMeshWithMerge(meshes[i], outPoints, outFaces, pointHash, meshMaps[i].pointMap);
+            AppendMeshWithMerge(meshes[i], outPoints, outCells, outCellTypes,
+                                pointHash, meshMaps[i].pointMap);
         }
     } else {
         igIndex pointOffset = 0;
         for (size_t i = 0; i < meshes.size(); i++) {
-            AppendMeshSimple(meshes[i], outPoints, outFaces, pointOffset, meshMaps[i].pointMap);
+            AppendMeshSimple(meshes[i], outPoints, outCells, outCellTypes,
+                             pointOffset, meshMaps[i].pointMap);
         }
     }
 
-    igIndex faceOffset = 0;
+    igIndex cellOffset = 0;
     for (size_t i = 0; i < meshes.size(); i++) {
-        meshMaps[i].faceOffset = faceOffset;
-        auto fcs = meshes[i]->GetFaces();
-        if (fcs) {
-            faceOffset += (igIndex)fcs->GetNumberOfCells();
+        meshMaps[i].cellOffset = cellOffset;
+        auto cells = meshes[i]->GetCells();
+        if (cells) {
+            cellOffset += (igIndex)cells->GetNumberOfCells();
         }
     }
 
     outMesh->SetPoints(outPoints);
-    outMesh->SetFaces(outFaces);
+    outMesh->SetCells(outCells, outCellTypes);
     outMesh->RequestEditStatus();
     outMesh->Modified();
 
