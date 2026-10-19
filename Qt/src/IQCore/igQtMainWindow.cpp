@@ -6752,7 +6752,7 @@ void igQtMainWindow::initAllFilters() {
         const int px = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT, QStringLiteral("轴上一点 X"), "0");
         const int py = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT, QStringLiteral("轴上一点 Y"), "0");
         const int pz = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT, QStringLiteral("轴上一点 Z"), "0");
-        const int resolution = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT, QStringLiteral("分段数"), "36");
+        const int resolution = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT, QStringLiteral("分段数"), "12");
         const int angle = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT, QStringLiteral("角度 (度)"), "360");
         dialog->show();
         dialog->setApplyFunctor([=, this]() {
