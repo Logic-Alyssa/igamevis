@@ -240,6 +240,14 @@ function(igame_register_example_test EXAMPLE_TARGET)
         return()
     endif ()
 
+    # Transform runs numeric checks in CTest; the default invocation keeps the viewer.
+    if ("${EXAMPLE_TARGET}" STREQUAL "testTransform")
+        add_test(NAME ${EXAMPLE_TARGET} COMMAND "$<TARGET_FILE:${EXAMPLE_TARGET}>" --check
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(${EXAMPLE_TARGET} PROPERTIES TIMEOUT 180)
+        return()
+    endif ()
+
     if ("${EXAMPLE_TARGET}" STREQUAL "testSmooth")
         add_test(NAME ${EXAMPLE_TARGET} COMMAND "$<TARGET_FILE:${EXAMPLE_TARGET}>" --check
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -543,7 +551,7 @@ igame_add_example(testLsDynaReader IO/LsDynaReader.cpp)
 # Animation / Filters
 igame_add_example(testVolumeOfRevolution VolumeOfRevolution/TestVolumeOfRevolution.cpp)
 igame_add_example(testAnimation Animation/TestAnimation.cpp)
-
+igame_add_example(testPassArray Filter/PassArrays/TestPassArrays.cpp)
 if (TARGET Qt_module AND TARGET iGameVis)
     find_package(Qt5 REQUIRED COMPONENTS Core Widgets OpenGL Charts Svg)
     igame_add_example(testAnimationPipelineValidation
@@ -595,6 +603,8 @@ igame_add_example(testGhostDemo Filter/GhostCell/TestGhostDemo.cpp)
 igame_add_example(testGroupDatasets Filter/TestGroupDatasets.cpp)
 # Modeling：线性拉伸（Linear Extrusion）
 igame_add_example(testLinearExtrusion Filter/TestLinearExtrusion.cpp)
+# Modeling：带状面（Ribbon）
+igame_add_example(testRibbon Filter/TestRibbon.cpp)
 # 表面切向量 (Generate Surface Tangents)
 igame_add_example(testGenerateSurfaceTangents Filter/GenerateSurfaceTangents/TestGenerateSurfaceTangents.cpp)
 igame_add_example(testMedianFilter Filter/Median/TestMedianFilter.cpp)
@@ -655,7 +665,7 @@ igame_add_example(testResampleToImage Filter/Convert/TestResampleToImage.cpp)
 igame_add_example(testResampleToLine Filter/TestResampleToLine.cpp)
 igame_add_example(testTriangleStrip Filter/TriangleStrip/TestTriangleStrip.cpp)
 igame_add_example(testResampleImageChecks Filter/Convert/TestResampleImageChecks.cpp)
-igame_add_example(testIntegrateVariables Filter/FeatureExtraction/IntegrateVariables.cpp)
+igame_add_example(testIntegrateVariables Filter/FeatureExtraction/TestIntegrateVariables.cpp)
 if (ENABLE_QT_MODULE)
     igame_add_example(testThirdBatchMenu Filter/ThirdBatchMenuValidation.cpp)
     target_link_libraries(testThirdBatchMenu PRIVATE Qt_module)
@@ -703,6 +713,7 @@ igame_add_example(testWarpByScalar Filter/WarpByScalar/TestWarpByScalar.cpp)
 
 # First-batch standard filter examples (Elevation is registered above).
 igame_add_example(testPointCoordinates Filter/PointCoordinates/TestPointCoordinates.cpp)
+igame_add_example(testTransform Filter/Transformation/TestTransform.cpp)
 igame_add_example(testCellCenterFilter Filter/CellCenter/TestCellCenterFilter.cpp)
 igame_add_example(testExtractCellsByType Filter/MyFilter/TestExtractCellsByType.cpp)
 igame_add_example(TestValidateCellsFilter Filter/MyFilter/TestValidateCellsFilter.cpp)
