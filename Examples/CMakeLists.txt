@@ -594,6 +594,8 @@ igame_add_example(testGhostDemo Filter/GhostCell/TestGhostDemo.cpp)
 igame_add_example(testGroupDatasets Filter/TestGroupDatasets.cpp)
 # Modeling：线性拉伸（Linear Extrusion）
 igame_add_example(testLinearExtrusion Filter/TestLinearExtrusion.cpp)
+# Modeling：带状面（Ribbon）
+igame_add_example(testRibbon Filter/TestRibbon.cpp)
 # 表面切向量 (Generate Surface Tangents)
 igame_add_example(testGenerateSurfaceTangents Filter/GenerateSurfaceTangents/TestGenerateSurfaceTangents.cpp)
 igame_add_example(testMedianFilter Filter/Median/TestMedianFilter.cpp)
