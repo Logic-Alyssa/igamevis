@@ -240,6 +240,14 @@ function(igame_register_example_test EXAMPLE_TARGET)
         return()
     endif ()
 
+    # Transform runs numeric checks in CTest; the default invocation keeps the viewer.
+    if ("${EXAMPLE_TARGET}" STREQUAL "testTransform")
+        add_test(NAME ${EXAMPLE_TARGET} COMMAND "$<TARGET_FILE:${EXAMPLE_TARGET}>" --check
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(${EXAMPLE_TARGET} PROPERTIES TIMEOUT 180)
+        return()
+    endif ()
+
     if ("${EXAMPLE_TARGET}" STREQUAL "testSmooth")
         add_test(NAME ${EXAMPLE_TARGET} COMMAND "$<TARGET_FILE:${EXAMPLE_TARGET}>" --check
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -656,7 +664,7 @@ igame_add_example(testResampleToImage Filter/Convert/TestResampleToImage.cpp)
 igame_add_example(testResampleToLine Filter/TestResampleToLine.cpp)
 igame_add_example(testTriangleStrip Filter/TriangleStrip/TestTriangleStrip.cpp)
 igame_add_example(testResampleImageChecks Filter/Convert/TestResampleImageChecks.cpp)
-igame_add_example(testIntegrateVariables Filter/FeatureExtraction/IntegrateVariables.cpp)
+igame_add_example(testIntegrateVariables Filter/FeatureExtraction/TestIntegrateVariables.cpp)
 if (ENABLE_QT_MODULE)
     igame_add_example(testThirdBatchMenu Filter/ThirdBatchMenuValidation.cpp)
     target_link_libraries(testThirdBatchMenu PRIVATE Qt_module)

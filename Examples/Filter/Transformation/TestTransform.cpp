@@ -1,3 +1,13 @@
+// 回归恢复（待提交）：恢复旧可视化示例时覆盖了轴心、点云和负缩放的数值检查。
+// 保留真实模型渲染，并先执行原有四组检查及真实模型逐点坐标检查；失败返回非 0。
+// --check / --no-render 跳过渲染窗口，便于自动回归；默认检查通过后显示结果。
+#include <Core/iGameScene.h>
+#include <iGameFileIO.h>
+#include <iGameInteractor.h>
+#include <iGameRenderWindow.h>
+#include <filesystem>
+#include <string>
+
 // 通用几何变换（Transform）用例：
 //   ① 轴心 pivot：绕自身中心旋转时包围盒中心不变；不设轴心时绕坐标原点旋转
 //   ② 点云（IG_POINT_SET）输入也可以变换
@@ -164,7 +174,7 @@ bool TestNegativeScale() {
 
 } // namespace
 
-int main() {
+bool RunRegressionChecks() {
     bool pass = true;
     pass = TestPointSetSupport() && pass;
     pass = TestPivot() && pass;
@@ -172,5 +182,92 @@ int main() {
     pass = TestDefaultPivotIsOrigin() && pass;
 
     std::cout << "Transform (pivot / point set / mirror) : " << (pass ? "PASS" : "FAIL") << std::endl;
-    return pass ? 0 : 1;
+    return pass;
+}
+
+std::string FindVisualizationModel(const char* executable) {
+    namespace fs = std::filesystem;
+    const fs::path exeDir = fs::absolute(executable).parent_path();
+    const fs::path candidates[] = {
+        fs::path("Models/Transform_Complex.vtk"),
+        fs::path("Examples/Models/Transform_Complex.vtk"),
+        exeDir / "Models/Transform_Complex.vtk",
+        exeDir.parent_path() / "Models/Transform_Complex.vtk",
+        fs::path(__FILE__).parent_path().parent_path().parent_path() / "Models/Transform_Complex.vtk"
+    };
+    for (const auto& candidate : candidates) {
+        if (fs::is_regular_file(candidate)) return candidate.string();
+    }
+    return "Models/Transform_Complex.vtk";
+}
+
+int main(int argc, char** argv)
+{
+    bool noRender = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--check" || arg == "--no-render") noRender = true;
+        else { std::cerr << "Usage: testTransform [--check|--no-render]\n"; return 1; }
+    }
+    if (!RunRegressionChecks()) return 1;
+
+    const std::string fileName = FindVisualizationModel(argv[0]);
+    auto input = iGame::FileIO::ReadFile(fileName);
+
+    if (input == nullptr) {
+        std::cout << "Read ERROR!\n";
+        return 1;
+    }
+
+    auto filter = iGame::TransformFilter::New();
+    filter->SetInput(input);
+
+    filter->SetTranslation(10.0f, 0.0f, 0.0f);
+    filter->SetRotation(0.0f, 0.0f, 45.0f);
+    filter->SetScale(1.5f, 1.5f, 1.5f);
+
+    if (!filter->Execute()) {
+        std::cout << "Transform ERROR!\n";
+        return 1;
+    }
+
+    auto output = filter->GetOutput();
+    if (output == nullptr) {
+        std::cout << "Output ERROR!\n";
+        return 1;
+    }
+
+    // Check every model point against the analytic T * Rz(45) * S(1.5) result.
+    auto inPoints = iGame::DynamicCast<iGame::PointSet>(input);
+    auto outPoints = iGame::DynamicCast<iGame::PointSet>(output);
+    if (!inPoints || !outPoints || inPoints->GetNumberOfPoints() != outPoints->GetNumberOfPoints()) {
+        std::cerr << "FAILED: transformed model point count\n";
+        return 1;
+    }
+    const double factor = 1.5 / std::sqrt(2.0);
+    for (IGsize i = 0; i < inPoints->GetNumberOfPoints(); ++i) {
+        const auto& a = inPoints->GetPoint(i);
+        const auto& b = outPoints->GetPoint(i);
+        if (!Check(Nearly(b[0], 10.0 + factor * (a[0] - a[1])) &&
+                   Nearly(b[1], factor * (a[0] + a[1])) && Nearly(b[2], 1.5 * a[2]),
+                   "visualization model coordinates must match T * R * S")) return 1;
+    }
+    std::cout << "Transform_Complex model coordinates: PASS\n";
+    if (noRender) return 0;
+
+    auto scene = iGame::Scene::New();
+    scene->AddModel(output);
+
+    auto window = iGame::RenderWindow::New();
+    window->SetSize(1920, 1080);
+    window->SetScene(scene);
+
+    auto interactor = iGame::Interactor::New();
+    interactor->Initialize(scene);
+    interactor->CreateDefaultStyle();
+
+    window->SetInteractor(interactor);
+    window->Show();
+
+    return 0;
 }
