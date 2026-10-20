@@ -150,6 +150,15 @@ if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Models")
             "${CMAKE_CURRENT_BINARY_DIR}/Models"
     )
 endif ()
+if (EXISTS "${CMAKE_SOURCE_DIR}/test/Streamline Test/StreamTest.vtk")
+    list(APPEND _IGAME_EXAMPLE_ASSET_COPY_COMMANDS
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/Models"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/test/Streamline Test/StreamTest.vtk"
+            "${CMAKE_CURRENT_BINARY_DIR}/Models/OverlappingCellsDetectorStreamTest.vtk"
+    )
+endif ()
 add_custom_target(iGameCopyExampleAssets ${_IGAME_EXAMPLE_ASSET_COPY_COMMANDS})
 
 set(IGAME_EXAMPLE_TARGETS "")
@@ -213,6 +222,7 @@ set(IGAME_BATCH2_EXAMPLES
     testBatch2GeometryValidation
     testStandardFiltersMenu
     testTextureMapToPlane
+    testConnectedSurfaceProperties
 )
 set(IGAME_BATCH2_VISUAL_EXAMPLES
     testCountCellVertices
@@ -241,6 +251,14 @@ set(_IGAME_MODEL_GEOMETRY_FIXTURE
 
 function(igame_register_example_test EXAMPLE_TARGET)
     if (NOT TARGET ${EXAMPLE_TARGET})
+        return()
+    endif ()
+
+    # Transform runs numeric checks in CTest; the default invocation keeps the viewer.
+    if ("${EXAMPLE_TARGET}" STREQUAL "testTransform")
+        add_test(NAME ${EXAMPLE_TARGET} COMMAND "$<TARGET_FILE:${EXAMPLE_TARGET}>" --check
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(${EXAMPLE_TARGET} PROPERTIES TIMEOUT 180)
         return()
     endif ()
 
@@ -513,6 +531,17 @@ igame_add_example(testSmooth Filter/Smooth/TestSmooth.cpp)
 
 # IO (optional modules)
 igame_add_example(testSplineReaderCPU IO/SplineReaderCPU.cpp)
+
+# MeshQuality
+igame_add_example(testMeshQuality Filter/MeshQuality/TestMeshQuality.cpp)
+# Time Series
+igame_add_example(testExtractTimeSteps Filter/TimeSeries/TestExtractTimeSteps.cpp)
+
+# Time Series
+igame_add_example(testTemporalShiftScale Filter/TimeSeries/TestTemporalShiftScale.cpp)
+# Data Processing (kept here as the canonical occurrence)
+igame_add_example(testVolumeMeshSimplification Filter/TestVolumeMeshSimplification.cpp)
+igame_add_example(testMeshTetrahedralize Filter/TestMeshTetrahedralize.cpp)
 igame_add_example(testSpectralReaderCPU ../iGameCore/IO/Spectral/tests/SpectralReaderValidation.cxx)
 igame_add_example(testVTKXMLDataArrayDecoderValidation IO/VTKXMLDataArrayDecoderValidation.cpp)
 igame_add_example(testVertexReaderValidation IO/VertexReaderValidation.cpp)
@@ -546,7 +575,7 @@ igame_add_example(testLsDynaReader IO/LsDynaReader.cpp)
 
 # Animation / Filters
 igame_add_example(testAnimation Animation/TestAnimation.cpp)
-
+igame_add_example(testPassArray Filter/PassArrays/TestPassArrays.cpp)
 if (TARGET Qt_module AND TARGET iGameVis)
     find_package(Qt5 REQUIRED COMPONENTS Core Widgets OpenGL Charts Svg)
     igame_add_example(testAnimationPipelineValidation
@@ -598,11 +627,13 @@ igame_add_example(testGhostDemo Filter/GhostCell/TestGhostDemo.cpp)
 igame_add_example(testGroupDatasets Filter/TestGroupDatasets.cpp)
 # Modeling：线性拉伸（Linear Extrusion）
 igame_add_example(testLinearExtrusion Filter/TestLinearExtrusion.cpp)
+# Modeling：带状面（Ribbon）
+igame_add_example(testRibbon Filter/TestRibbon.cpp)
 # 表面切向量 (Generate Surface Tangents)
 igame_add_example(testGenerateSurfaceTangents Filter/GenerateSurfaceTangents/TestGenerateSurfaceTangents.cpp)
 igame_add_example(testMedianFilter Filter/Median/TestMedianFilter.cpp)
 
-# ������ #5 + �е����� #28 ���ײ�������
+#        #5 +  е      #28    ײ       
 igame_add_example(testGhostCellModel Filter/GhostCell/TestGhostCellModel.cpp)
 igame_add_example(testPlaneSamplingFilter Filter/TestPlaneSampling.cpp)
 igame_add_example(testExtractEnclosedPoints Filter/TestExtractEnclosedPoints.cpp)
@@ -658,7 +689,7 @@ igame_add_example(testResampleToImage Filter/Convert/TestResampleToImage.cpp)
 igame_add_example(testResampleToLine Filter/TestResampleToLine.cpp)
 igame_add_example(testTriangleStrip Filter/TriangleStrip/TestTriangleStrip.cpp)
 igame_add_example(testResampleImageChecks Filter/Convert/TestResampleImageChecks.cpp)
-igame_add_example(testIntegrateVariables Filter/FeatureExtraction/IntegrateVariables.cpp)
+igame_add_example(testIntegrateVariables Filter/FeatureExtraction/TestIntegrateVariables.cpp)
 if (ENABLE_QT_MODULE)
     igame_add_example(testThirdBatchMenu Filter/ThirdBatchMenuValidation.cpp)
     target_link_libraries(testThirdBatchMenu PRIVATE Qt_module)
@@ -689,7 +720,6 @@ igame_add_example(testCountCellFacesOutput Filter/FeatureExtraction/CountCellFac
 igame_add_example(testFeatureEdgeRegion Filter/FeatureExtraction/FeatureEdgeRegion.cpp)
 igame_add_example(testThresholdAndGenerateIds Filter/TestThresholdAndGenerateIds.cpp)
 igame_add_example(testWarpByVector Filter/TestWarpByVector.cpp)
-igame_add_example(testMeshQuality Filter/MeshQuality/TestMeshQuality.cpp)
 igame_add_example(testPointLineInterpolator Filter/PointLineInterpolator/TestPointLineInterpolator.cpp)
 igame_add_example(testPointSetToOctree Filter/Convert/TestPointSetToOctree.cpp)
 igame_add_example(testResampleOctreeChecks Filter/Convert/TestResampleOctreeChecks.cpp)
@@ -698,14 +728,13 @@ igame_add_example(testPointVolumeInterpolatorSelfCheck Filter/Interpolation/Test
 igame_add_example(testShrink Filter/Shrink/TestShrink.cpp)
 igame_add_example(testShrinkModel Filter/Shrink/TestShrinkModel.cpp)
 igame_add_example(testSurfaceNormalsFilter Filter/SurfaceNormals/TestSurfaceNormalsFilter.cpp)
-igame_add_example(testVolumeMeshSimplification Filter/TestVolumeMeshSimplification.cpp)
-igame_add_example(testMeshTetrahedralize Filter/TestMeshTetrahedralize.cpp)
 
 # Warp By Scalar: displaces points along a normal by a point scalar array.
 igame_add_example(testWarpByScalar Filter/WarpByScalar/TestWarpByScalar.cpp)
 
 # First-batch standard filter examples (Elevation is registered above).
 igame_add_example(testPointCoordinates Filter/PointCoordinates/TestPointCoordinates.cpp)
+igame_add_example(testTransform Filter/Transformation/TestTransform.cpp)
 igame_add_example(testCellCenterFilter Filter/CellCenter/TestCellCenterFilter.cpp)
 igame_add_example(testExtractCellsByType Filter/MyFilter/TestExtractCellsByType.cpp)
 igame_add_example(TestValidateCellsFilter Filter/MyFilter/TestValidateCellsFilter.cpp)
@@ -723,6 +752,8 @@ igame_add_example(testExtractSubset Filter/TestExtractSubset.cpp)
 igame_add_example(testExtractLocation Filter/DataProcessing/ExtractLocation/TestExtractLocation.cpp)
 igame_add_example(testOverlappingCellsDetector Filter/DataProcessing/OverlappingCellsDetector/TestOverlappingCellsDetector.cpp)
 igame_add_example(testTextureMapToPlane Filter/DataProcessing/TextureMapToPlane/TestTextureMapToPlane.cpp)
+igame_add_example(testConnectedSurfaceProperties
+    Filter/DataProcessing/ConnectedSurfaceProperties/TestConnectedSurfaceProperties.cpp)
 
 igame_add_example(testExtractLocationDrag Filter/DataProcessing/ExtractLocation/TestExtractLocationDrag.cpp)
 
@@ -751,6 +782,15 @@ igame_add_example(testPerlinNoise Filter/AttributeManipulation/TestPerlinNoise.c
 
 igame_add_example(testTextureMapToSphere Filter/TextureMapToSphere/TestTextureMapToSphere.cpp)
 igame_add_example(testResampleWithDataSet Filter/TestResampleWithDataSet.cpp)
+
+# Batch 2 filter aligned with ParaView (Append Datasets).
+igame_add_example(testAppendDatasets Filter/TestAppendDatasets.cpp)
+
+# YieldCriteria: principal stress / Tresca / von Mises from a 6- or 9-component tensor array.
+igame_add_example(testYieldCriteria Filter/Tensor/TestYieldCriteria.cpp)
+
+# Batch 2 filter aligned with ParaView (Surface Vectors).
+igame_add_example(testSurfaceVectors Filter/TestSurfaceVectors.cpp)
 
 # Batch 2 filter aligned with ParaView (Compute Quartiles).
 igame_add_example(testComputeQuartiles Filter/TestComputeQuartiles.cpp)

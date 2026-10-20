@@ -36,6 +36,7 @@
 #include "TensorView/iGameTensorBase.h"
 #include "TensorView/iGameTensorFilter.h"
 #include "TensorView/iGameTensorRepresentation.h"
+#include "TensorView/iGameYieldCriteriaFilter.h"
 #include "Tests/iGameFilterPoints.h"
 #include "Tests/iGameSurfaceMeshFilterTest.h"
 #include "Tests/iGameVolumeMeshFilterTest.h"
@@ -61,6 +62,9 @@
 #include "AttributeManipulation/iGamePerlinNoiseFilter.h"
 
 #include "ComputeQuartiles/iGameComputeQuartilesFilter.h"
+#include "AppendReduce/iGameAppendReduceFilter.h"
+#include "TimeSeries/iGameExtractTimeStepsFilter.h"
+#include "SurfaceVectors/iGameSurfaceVectorsFilter.h"
 #include "AppendArcLength/iGameAppendArcLengthFilter.h"
 #include "Histogram/iGameHistogramFilter.h"
 #include "Tube/iGameTube.h"
@@ -76,12 +80,13 @@
 #include "PointAndCellIds/iGamePointAndCellIdsFilter.h"
 #include "ProcessGet/iGameGenerateProcessIdsFilter.h"
 #include "ResampleToLine/iGameResampleToLine.h"
+#include "Modeling/iGameRibbonFilter.h"
 #include "TriangleStrip/iGameTriangleStripFilter.h"
 #include "Connectivity/iGameConnectivityFilter.h"
 #include "ReverseSense/iGameReverseSenseFilter.h"
 #include "WarpByVector/iGameWarpByVectorFilter.h"
 
-// 以下 Filter 在 Qt 前端直接使用，统一注册以保证中央头可达
+// ���� Filter �� Qt ǰ��ֱ��ʹ�ã�ͳһע���Ա�֤����ͷ�ɴ�
 #include "Selection/iGameExtractCellsByRegionFilter.h"
 #include "BuildAdjacencyRelation/iGameBuildAdjacencyRelationFilter.h"
 #include "Convert/iGameConvertToCellDataFilter.h"
