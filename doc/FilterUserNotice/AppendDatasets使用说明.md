@@ -20,7 +20,7 @@ AppendDatasetsFilter 对标 ParaView 的 **Append Datasets** Filter（VTK 类：
 | Merge Points 默认值 | **关闭** | **关闭**（与 ParaView 一致） |
 | Tolerance 默认值 | 0（精确匹配） | 0（与 ParaView 一致） |
 | 属性保留规则 | 交集（所有输入都有才保留） | 交集（一致） |
-| 输入要求 | 至少 2 个数据集 | 至少 1 个数据集（GUI 要求场景中 ≥2 个模型） |
+| 输入要求 | 至少 2 个数据集 | GUI 仅合并选中的模型，单选生成数据相同的新模型 |
 
 > 默认行为（不合并点）下输出保留重复顶点，不做缝合；只有用户显式勾选
 > 「合并重复顶点」才执行合并，Tolerance=0 走精确匹配分支。
@@ -31,16 +31,15 @@ AppendDatasetsFilter 对标 ParaView 的 **Append Datasets** Filter（VTK 类：
 
 ### 2.1 iGameVis GUI 调用
 
-1. 加载至少 **2 个**网格模型（可用 Ctrl 多选文件，或逐个加载）；
+1. 在模型树中按住 **Ctrl 或 Shift** 点击选中要合并的网格模型；只选一个时生成数据相同的新模型（不合并原有重复点），未选中时提示先选择；
 2. 点击菜单 **「算法处理」→「新增filter/第二批」→「Append Datasets」**；
 3. 参数对话框中按需勾选：
    - **合并重复顶点 (Merge Points)**：默认不勾选（与 ParaView 默认一致）；
    - **合并容差 (Tolerance)**：默认 0，仅合并完全重合的点；
-4. 点击「应用」，场景中所有网格合并为一个 `append_datasets_result`，
+4. 点击「应用」，仅将打开参数面板时选中的网格合并为一个 `append_datasets_result`，其他模型不参与，
    并自动激活第一个标量属性做颜色映射。
 
-> 注意：GUI 版本合并的是**场景中全部模型**；如需只合并部分模型，
-> 请使用 C++ 接口逐个 `AddInput`。
+> 输入以打开参数面板时的模型树选择为准；未选中的模型（包括旧合并结果）不会参与。
 
 ### 2.2 C++ 代码调用
 

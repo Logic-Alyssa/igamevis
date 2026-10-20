@@ -10044,24 +10044,21 @@ void igQtMainWindow::initAllFilters() {
         auto scene = rendererWidget->GetScene();
         if (!scene) return;
 
-        auto modelList = scene->GetModelList();
-        if (!modelList) return;
-
-        int meshCount = 0;
-        for (auto it = modelList->Begin(); it != modelList->End(); ++it) {
-            auto model = it->second;
-            if (model && model->GetDataObject()) meshCount++;
-        }
-        if (meshCount < 2) {
+        // Capture the tree selection before opening the parameter panel so Apply
+        // cannot pick up unrelated scene models or previous results.
+        const auto inputs = modelTreeWidget->GetSelectedDataObjects();
+        if (inputs.empty()) {
             showDarkFramelessMessage(QStringLiteral("提示"),
-                                     QStringLiteral("场景中至少需要 2 个网格模型才能合并。"));
+                                     QStringLiteral("请先在模型树中选中要合并的模型。\n"
+                                                    "按住 Ctrl 或 Shift 点击可多选。"));
             return;
         }
 
         auto* dialog = new igQtFilterDialogDockWidget(this, true);
         dialog->setFilterTitle(QStringLiteral("Append Datasets"));
         dialog->setFilterDescription(QStringLiteral(
-                "将场景中所有网格合并为一个 UnstructuredMesh（保留原始单元类型）。\n"
+                "仅将打开面板时选中的网格合并为一个 UnstructuredMesh（保留原始单元类型）。\n"
+                "按住 Ctrl 或 Shift 点击模型树可多选；单选时生成相同几何和属性的新模型，不合并重复点。\n"
                 "默认不合并重复点（与 ParaView 一致）；需要消除接缝冗余顶点时勾选「合并重复顶点」，"
                 "容差为 0 时仅合并完全重合的点。\n"
                 "属性按交集规则保留：仅保留所有输入网格都具备的属性。"));
@@ -10080,26 +10077,13 @@ void igQtMainWindow::initAllFilters() {
             if (!ok) tolerance = 0.0f; // 解析失败时回退到 ParaView 默认值 0（精确合并）
 
             auto filter = AppendDatasetsFilter::New();
-            filter->SetMergePoints(mergePoints);
+            filter->SetMergePoints(inputs.size() > 1 && mergePoints);
             filter->SetTolerance(tolerance);
 
-            auto mList = rendererWidget->GetScene()->GetModelList();
-            int count = 0;
-            for (auto it = mList->Begin(); it != mList->End(); ++it) {
-                auto model = it->second;
-                if (model) {
-                    auto obj = model->GetDataObject();
-                    if (obj) {
-                        filter->AddInput(obj);
-                        count++;
-                    }
-                }
+            for (const auto& input : inputs) {
+                filter->AddInput(input);
             }
-            if (count <= 0) {
-                showDarkFramelessMessage(QStringLiteral("执行失败"),
-                                         QStringLiteral("没有可合并的输入网格。"));
-                return;
-            }
+            const int count = static_cast<int>(inputs.size());
 
             if (!filter->Execute()) {
                 showDarkFramelessMessage(QStringLiteral("执行失败"),

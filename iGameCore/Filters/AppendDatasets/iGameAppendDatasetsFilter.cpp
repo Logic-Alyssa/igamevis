@@ -314,6 +314,27 @@ bool AppendDatasetsFilter::Execute() {
     auto outCells = CellArray::New();
     auto outCellTypes = UnsignedIntArray::New();
 
+    // Single input: produce independent geometry and retain attribute types and
+    // precision instead of converting every array to float during appending.
+    if (inputCount == 1 && meshes.size() == 1) {
+        const auto& source = meshes.front();
+        outPoints->DeepCopy(source->GetPoints());
+        if (source->GetCells()) { outCells->DeepCopy(source->GetCells()); }
+        if (source->GetCellTypes()) { outCellTypes->DeepCopy(source->GetCellTypes()); }
+        auto attributes = AttributeSet::New();
+        if (!attributes->DeepCopy(source->GetAttributeSet())) {
+            m_Message = "Unable to copy input attributes.";
+            return false;
+        }
+        outMesh->SetPoints(outPoints);
+        outMesh->SetCells(outCells, outCellTypes);
+        outMesh->SetAttributeSet(attributes);
+        outMesh->RequestEditStatus();
+        outMesh->Modified();
+        this->SetOutput(outMesh);
+        return true;
+    }
+
     std::vector<AppendDatasetsFilter::MeshPointMap> meshMaps(meshes.size());
 
     if (m_MergePoints) {
