@@ -61,9 +61,7 @@
 #include "AttributeManipulation/iGameRandomVectorsFilter.h"
 #include "AttributeManipulation/iGamePerlinNoiseFilter.h"
 
-#include "AppendDatasets/iGameAppendDatasetsFilter.h"
-#include "AppendArcLength/iGameAppendArcLengthFilter.h"
-#include "Histogram/iGameHistogramFilter.h"
+#include "AppendReduce/iGameAppendReduceFilter.h"
 #include "Tube/iGameTube.h"
 #include "Attribute/iGameExtractComponentFilter.h"
 #include "AxisAlignedReflection/iGameAxisAlignedReflectionFilter.h"
@@ -83,7 +81,7 @@
 #include "ReverseSense/iGameReverseSenseFilter.h"
 #include "WarpByVector/iGameWarpByVectorFilter.h"
 
-// 以下 Filter 在 Qt 前端直接使用，统一注册以保证中央头可达
+// ���� Filter �� Qt ǰ��ֱ��ʹ�ã�ͳһע���Ա�֤����ͷ�ɴ�
 #include "Selection/iGameExtractCellsByRegionFilter.h"
 #include "BuildAdjacencyRelation/iGameBuildAdjacencyRelationFilter.h"
 #include "Convert/iGameConvertToCellDataFilter.h"

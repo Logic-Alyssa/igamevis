@@ -16,7 +16,9 @@
 #include "ModelSurface/iGameMultiBlockGeometryFilter.h"
 #include "MyFilter/iGameValidateCellsFilter.h"
 #include "AppendAttributes/iGameAppendAttributesFilter.h"
-#include "AppendReduce/iGameAppendReduceFilter.h"
+#include "AppendDatasets/iGameAppendDatasetsFilter.h"
+#include "AppendArcLength/iGameAppendArcLengthFilter.h"
+#include "Histogram/iGameHistogramFilter.h"
 #include "DataProcessing/ExtractLocation/iGameExtractLocationFilter.h"
 #include "DataProcessing/iGameRandomAttributesFilter.h"
 #include "FeatureExtraction/iGameDeflectNormalsFilter.h"
@@ -62,6 +64,7 @@
 #include "MeshQuality/iGameMeshQualityFilter.h"
 
 #include "Transformation/iGameTransformFilter.h"
+#include "TimeSeries/iGameTemporalShiftScaleFilter.h"
 
 #include "FeatureExtraction/iGameFeatureEdgesFilter.h"
 #include "FeatureExtraction/iGamePlaneSamplingFilter.h"
@@ -6927,7 +6930,6 @@ void igQtMainWindow::initAllFilters() {
         {"append_location_attributes", "附加点坐标到属性(AppendLocaitonAttribute)"},
         {"pass_arrays", "传递过滤数据数组 (Pass Arrays)"},
         {"volume_of_revolution", "旋转体生成 (Volume of Revolution)"},
-        {"append_reduce", "网格合并去重 (Append/Reduce)"},
         {"point_volume_interpolator", "点体积插值 (Point Volume Interpolator)"},
         {"angular_periodic", "角度周期复制 (Angular Periodic)"},
         {"resample_to_line", "重采样至直线(ResampleToLine)"},
@@ -7462,46 +7464,6 @@ void igQtMainWindow::initAllFilters() {
         connect(panel, &igQtPointSetToOctreeWidget::closeRequested, dock, &QDockWidget::close);
         addDockWidget(Qt::LeftDockWidgetArea, dock);
         dock->show();
-    });
-
-    bindDevelopmentAction("append_reduce", [=, this]() {
-        const QString title = QStringLiteral("网格合并去重");
-        auto* scene = rendererWidget->GetScene();
-        if (!scene) return;
-        auto models = scene->GetModelList();
-        if (!models) return;
-        auto* dialog = new igQtFilterDialogDockWidget(this, true);
-        dialog->setFilterTitle(title);
-        dialog->setFilterDescription(QStringLiteral("合并当前场景中的所有网格。"));
-        const int merge = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX,
-                QStringLiteral("合并重复顶点"), "true");
-        const int tolerance = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
-                QStringLiteral("容差"), "1e-6");
-        dialog->show();
-        dialog->setApplyFunctor([=, this]() {
-            bool om = false, ot = false;
-            const bool mergePoints = dialog->getChecked(merge, om);
-            const double tol = dialog->getDouble(tolerance, ot);
-            if (!om || !ot || tol <= 0) { showDarkFramelessMessage(title, QStringLiteral("请填写正数容差。")); return; }
-            auto filter = AppendReduceFilter::New();
-            filter->SetMergePoints(mergePoints);
-            filter->SetTolerance(static_cast<float>(tol));
-            int count = 0;
-            for (auto it = models->Begin(); it != models->End(); ++it) {
-                auto model = it->second;
-                if (model && model->GetDataObject()) { filter->AddInput(model->GetDataObject()); ++count; }
-            }
-            if (count == 0 || !filter->Execute()) {
-                showDarkFramelessMessage(title, QStringLiteral("场景中没有可合并网格，或合并失败。")); return;
-            }
-            auto output = filter->GetOutput();
-            if (output) {
-                output->SetName("append_reduce_result");
-                modelTreeWidget->addDataObjectToModelTree(output, Algorithm);
-                rendererWidget->update();
-            }
-            dialog->close();
-        });
     });
 
     bindDevelopmentAction("random_attributes", [=, this]() {
@@ -10153,6 +10115,75 @@ void igQtMainWindow::initAllFilters() {
         });
     });
 
+
+    // 新增「时间平移/缩放」菜单项
+    QAction* temporalShiftScaleAction =
+        developingFiltersBatch2->addAction(QStringLiteral("时间平移/缩放 (TemporalShiftScale)"));
+    connect(temporalShiftScaleAction, &QAction::triggered, this, [this](bool) {
+        auto model = rendererWidget->GetScene()->GetCurrentModel();
+        if (model == nullptr) {
+            showDarkFramelessMessage(QStringLiteral("Warning"), QStringLiteral("当前没有打开模型。"));
+            return;
+        }
+        auto data = model->GetDataObject();
+        if (data == nullptr) {
+            showDarkFramelessMessage(QStringLiteral("Warning"), QStringLiteral("当前模型没有数据。"));
+            return;
+        }
+        auto frames = data->PeekTimeFrames();
+        if (frames == nullptr || frames->GetTimeNum() == 0) {
+            showDarkFramelessMessage(QStringLiteral("Warning"), QStringLiteral("当前模型没有时间序列。"));
+            return;
+        }
+
+        igQtFilterDialogDockWidget* dialog = new igQtFilterDialogDockWidget(this, true);
+        dialog->setFilterTitle(QStringLiteral("TemporalShiftScale - 时间平移/缩放"));
+        dialog->setFilterDescription(QStringLiteral("t' = (t + Pre Shift) × Scale + Post Shift"));
+        const int preShiftId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
+                                                    QStringLiteral("Pre Shift"), "0.0");
+        const int scaleId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
+                                                 QStringLiteral("Scale"), "1.0");
+        const int postShiftId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
+                                                     QStringLiteral("Post Shift"), "0.0");
+        dialog->show();
+
+        dialog->setApplyFunctor([=, this]() {
+            bool ok = false;
+            const float preShift = static_cast<float>(dialog->getDouble(preShiftId, ok));
+            if (!ok) {
+                showDarkFramelessMessage(QStringLiteral("参数错误"), QStringLiteral("Pre Shift 不是有效数字。"));
+                return;
+            }
+            const float scale = static_cast<float>(dialog->getDouble(scaleId, ok));
+            if (!ok) {
+                showDarkFramelessMessage(QStringLiteral("参数错误"), QStringLiteral("Scale 不是有效数字。"));
+                return;
+            }
+            const float postShift = static_cast<float>(dialog->getDouble(postShiftId, ok));
+            if (!ok) {
+                showDarkFramelessMessage(QStringLiteral("参数错误"), QStringLiteral("Post Shift 不是有效数字。"));
+                return;
+            }
+
+            auto filter = iGame::TemporalShiftScaleFilter::New();
+            filter->SetPreShift(preShift);
+            filter->SetScale(scale);
+            filter->SetPostShift(postShift);
+            filter->SetInput(data);
+            if (!filter->Execute()) {
+                showDarkFramelessMessage(QStringLiteral("Warning"),
+                                         QStringLiteral("执行失败：Scale 不能为 0，或输入没有时间序列。"));
+                return;
+            }
+            auto outObj = filter->GetOutput();
+            if (!outObj) {
+                showDarkFramelessMessage(QStringLiteral("Warning"), QStringLiteral("输出对象为空。"));
+                return;
+            }
+            modelTreeWidget->addDataObjectToModelTree(outObj, Algorithm);
+            rendererWidget->update();
+        });
+    });
 }
 
 void igQtMainWindow::initAllDockWidgetConnectWithAction() {
