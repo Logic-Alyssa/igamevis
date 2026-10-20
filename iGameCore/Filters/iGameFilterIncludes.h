@@ -36,6 +36,7 @@
 #include "TensorView/iGameTensorBase.h"
 #include "TensorView/iGameTensorFilter.h"
 #include "TensorView/iGameTensorRepresentation.h"
+#include "TensorView/iGameYieldCriteriaFilter.h"
 #include "Tests/iGameFilterPoints.h"
 #include "Tests/iGameSurfaceMeshFilterTest.h"
 #include "Tests/iGameVolumeMeshFilterTest.h"
@@ -61,6 +62,10 @@
 #include "AttributeManipulation/iGamePerlinNoiseFilter.h"
 
 #include "AppendReduce/iGameAppendReduceFilter.h"
+
+#include "TimeSeries/iGameExtractTimeStepsFilter.h"
+
+#include "SurfaceVectors/iGameSurfaceVectorsFilter.h"
 #include "AppendArcLength/iGameAppendArcLengthFilter.h"
 #include "Histogram/iGameHistogramFilter.h"
 #include "Tube/iGameTube.h"
@@ -81,3 +86,18 @@
 #include "Connectivity/iGameConnectivityFilter.h"
 #include "ReverseSense/iGameReverseSenseFilter.h"
 #include "WarpByVector/iGameWarpByVectorFilter.h"
+
+// ���� Filter �� Qt ǰ��ֱ��ʹ�ã�ͳһע���Ա�֤����ͷ�ɴ�
+#include "Selection/iGameExtractCellsByRegionFilter.h"
+#include "BuildAdjacencyRelation/iGameBuildAdjacencyRelationFilter.h"
+#include "Convert/iGameConvertToCellDataFilter.h"
+#include "Convert/iGameConvertToLagrangeUnstructuredMeshFilter.h"
+#include "Convert/iGameConvertToPointDataFilter.h"
+#include "Convert/iGamePointSetToOctreeFilter.h"
+#include "DataProcessing/iGameMeshSimplificationFilter.h"
+#include "DataProcessing/iGameMeshTriangulationFilter.h"
+#include "DataProcessing/ExtractLocation/iGameExtractLocationFilter.h"
+#include "Deformation/iGameStressDeformationFilter.h"
+#include "GhostCell/iGameGhostCellFilter.h"
+#include "Interpolation/iGamePointVolumeInterpolatorFilter.h"
+#include "MyFilter/iGameExtractCellsByTypeFilter.h"

@@ -20,7 +20,7 @@ else ()
     set(_IGAME_EXAMPLE_CORE_LIBS ${IGAMEVIS_CORE_LIB_TARGETS})
 endif ()
 
-find_package(HDF5 REQUIRED)
+find_package(HDF5)
 find_package(FFMPEG QUIET)
 find_package(AbqSDK QUIET)
 find_package(OpenMP QUIET)
@@ -150,6 +150,15 @@ if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Models")
             "${CMAKE_CURRENT_BINARY_DIR}/Models"
     )
 endif ()
+if (EXISTS "${CMAKE_SOURCE_DIR}/test/Streamline Test/StreamTest.vtk")
+    list(APPEND _IGAME_EXAMPLE_ASSET_COPY_COMMANDS
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/Models"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/test/Streamline Test/StreamTest.vtk"
+            "${CMAKE_CURRENT_BINARY_DIR}/Models/OverlappingCellsDetectorStreamTest.vtk"
+    )
+endif ()
 add_custom_target(iGameCopyExampleAssets ${_IGAME_EXAMPLE_ASSET_COPY_COMMANDS})
 
 set(IGAME_EXAMPLE_TARGETS "")
@@ -163,7 +172,11 @@ function(igame_add_example EXAMPLE_TARGET SOURCE)
 endfunction()
 
 function(igame_link_standard_example EXAMPLE_TARGET)
-    target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS} HDF5::HDF5)
+    if (TARGET HDF5::HDF5)
+        target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS} HDF5::HDF5)
+    else ()
+        target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS})
+    endif ()
 endfunction()
 
 set(IGAME_BATCH3_EXAMPLES
@@ -209,6 +222,7 @@ set(IGAME_BATCH2_EXAMPLES
     testBatch2GeometryValidation
     testStandardFiltersMenu
     testTextureMapToPlane
+    testConnectedSurfaceProperties
 )
 set(IGAME_BATCH2_VISUAL_EXAMPLES
     testCountCellVertices
@@ -517,6 +531,23 @@ igame_add_example(testSmooth Filter/Smooth/TestSmooth.cpp)
 
 # IO (optional modules)
 igame_add_example(testSplineReaderCPU IO/SplineReaderCPU.cpp)
+
+# Transform
+igame_add_example(testTransform Filter/TestTransform.cpp)
+# MeshQuality
+igame_add_example(testMeshQuality Filter/MeshQuality/TestMeshQuality.cpp)
+# Time Series
+igame_add_example(testExtractTimeSteps Filter/TimeSeries/TestExtractTimeSteps.cpp)
+#Data Processing
+igame_add_example(testVolumeMeshSimplification Filter/TestVolumeMeshSimplification.cpp)
+igame_add_example(testMeshTetrahedralize Filter/TestMeshTetrahedralize.cpp)
+
+
+# Time Series
+igame_add_example(testTemporalShiftScale Filter/TimeSeries/TestTemporalShiftScale.cpp)
+#Data Processing
+igame_add_example(testVolumeMeshSimplification Filter/TestVolumeMeshSimplification.cpp)
+igame_add_example(testMeshTetrahedralize Filter/TestMeshTetrahedralize.cpp)
 igame_add_example(testSpectralReaderCPU ../iGameCore/IO/Spectral/tests/SpectralReaderValidation.cxx)
 igame_add_example(testVTKXMLDataArrayDecoderValidation IO/VTKXMLDataArrayDecoderValidation.cpp)
 igame_add_example(testVertexReaderValidation IO/VertexReaderValidation.cpp)
@@ -731,6 +762,8 @@ igame_add_example(testExtractSubset Filter/TestExtractSubset.cpp)
 igame_add_example(testExtractLocation Filter/DataProcessing/ExtractLocation/TestExtractLocation.cpp)
 igame_add_example(testOverlappingCellsDetector Filter/DataProcessing/OverlappingCellsDetector/TestOverlappingCellsDetector.cpp)
 igame_add_example(testTextureMapToPlane Filter/DataProcessing/TextureMapToPlane/TestTextureMapToPlane.cpp)
+igame_add_example(testConnectedSurfaceProperties
+    Filter/DataProcessing/ConnectedSurfaceProperties/TestConnectedSurfaceProperties.cpp)
 
 igame_add_example(testExtractLocationDrag Filter/DataProcessing/ExtractLocation/TestExtractLocationDrag.cpp)
 
@@ -759,6 +792,15 @@ igame_add_example(testPerlinNoise Filter/AttributeManipulation/TestPerlinNoise.c
 
 igame_add_example(testTextureMapToSphere Filter/TextureMapToSphere/TestTextureMapToSphere.cpp)
 igame_add_example(testResampleWithDataSet Filter/TestResampleWithDataSet.cpp)
+
+# Batch 2 filter aligned with ParaView (Append Datasets).
+igame_add_example(testAppendDatasets Filter/TestAppendDatasets.cpp)
+
+# YieldCriteria: principal stress / Tresca / von Mises from a 6- or 9-component tensor array.
+igame_add_example(testYieldCriteria Filter/Tensor/TestYieldCriteria.cpp)
+
+# Batch 2 filter aligned with ParaView (Surface Vectors).
+igame_add_example(testSurfaceVectors Filter/TestSurfaceVectors.cpp)
 
 get_property(IGAME_EXAMPLE_TARGETS DIRECTORY PROPERTY IGAME_EXAMPLE_TARGETS)
 if (NOT IGAME_EXAMPLE_TARGETS)
