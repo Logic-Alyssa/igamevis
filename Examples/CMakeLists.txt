@@ -50,7 +50,8 @@ if (WIN32)
             "-DIGAME_ABQ_RUNTIME_LIBRARY_NAMES=${_IGAME_EXAMPLE_ABQ_RUNTIME_NAMES}"
             "-DIGAME_HDF5_RUNTIME_FILE=${_IGAME_EXAMPLE_HDF5_RUNTIME}"
             "-DIGAME_GPS_RUNTIME_DIR=${CMAKE_SOURCE_DIR}/CMakeGPS/CMakeGPS/ReferenceDLL"
-            -P "${CMAKE_SOURCE_DIR}/Cmake/DeployExampleRuntime.cmake"
+            #-P "${CMAKE_SOURCE_DIR}/Cmake/DeployExampleRuntime.cmake"
+            -P "${CMAKE_SOURCE_DIR}/../Cmake/DeployExampleRuntime.cmake"
         COMMENT "Deploying runtime DLLs for Examples"
         VERBATIM)
 else ()
@@ -598,10 +599,11 @@ igame_add_example(testLinearExtrusion Filter/TestLinearExtrusion.cpp)
 igame_add_example(testGenerateSurfaceTangents Filter/GenerateSurfaceTangents/TestGenerateSurfaceTangents.cpp)
 igame_add_example(testMedianFilter Filter/Median/TestMedianFilter.cpp)
 
-# ������ #5 + �е����� #28 ���ײ�������
+#        #5 +  е      #28    ײ       
 igame_add_example(testGhostCellModel Filter/GhostCell/TestGhostCellModel.cpp)
 igame_add_example(testPlaneSamplingFilter Filter/TestPlaneSampling.cpp)
 igame_add_example(testExtractEnclosedPoints Filter/TestExtractEnclosedPoints.cpp)
+igame_add_example(testPointPlaneInterpolator Filter/TestPointPlaneInterpolator.cpp)
 
 igame_add_example(TestTubeFilter Filter/Tube/TestTubeFilter.cpp)
 igame_add_example(TestSubdivideFilter Filter/Subdivide/TestSubdivideFilter.cpp)
