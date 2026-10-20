@@ -10296,12 +10296,11 @@ void igQtMainWindow::initAllFilters() {
 
                     const auto& attr = obj->GetAttributeSet()->GetAttribute(
                             static_cast<IGsize>(attrIndices[static_cast<size_t>(choice)]));
-                    // 提前保存属性名：filter 会原位替换 attrSet 中的数组对象，
-                    // Execute 后不再通过该引用访问
+                    // 输出副本中替换同名数组，输入模型保持不变。
                     const QString attrName = QString::fromStdString(attr.pointer->GetName());
 
                     SurfaceVectorsFilter::Pointer filter = SurfaceVectorsFilter::New();
-                    filter->SetVectorAttributeByName(attr.pointer->GetName());
+                    filter->SetVectorAttributeByIndex(static_cast<int>(attrIndices[static_cast<size_t>(choice)]));
                     filter->SetConstraintMode(
                             static_cast<SurfaceVectorsFilter::ConstraintMode>(mode));
                     filter->SetInput(obj);
