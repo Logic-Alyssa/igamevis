@@ -580,6 +580,7 @@ igame_add_example(testAnsysRTHReader IO/AnsysRTHReader.cpp)
 igame_add_example(testLsDynaReader IO/LsDynaReader.cpp)
 
 # Animation / Filters
+igame_add_example(testVolumeOfRevolution VolumeOfRevolution/TestVolumeOfRevolution.cpp)
 igame_add_example(testAnimation Animation/TestAnimation.cpp)
 igame_add_example(testPassArray Filter/PassArrays/TestPassArrays.cpp)
 if (TARGET Qt_module AND TARGET iGameVis)
