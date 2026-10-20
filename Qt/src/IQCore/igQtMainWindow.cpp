@@ -10231,6 +10231,113 @@ void igQtMainWindow::initAllFilters() {
                 modelTreeWidget->addDataObjectToModelTree(output, ItemSource::Algorithm);
                 rendererWidget->update();
             });
+
+    // === SurfaceVectors Filter: 将向量投影到表面（对标 ParaView Surface Vectors） ===
+    connect(developingFiltersBatch2->addAction(QStringLiteral("Surface Vectors")), &QAction::triggered, this,
+            [&](bool checked) {
+                auto currentModel = rendererWidget->GetScene()->GetCurrentModel();
+                if (!currentModel) {
+                    showDarkFramelessMessage(QStringLiteral("无可用模型"),
+                                             QStringLiteral("请先加载并选择一个网格模型。"));
+                    return;
+                }
+                auto obj = currentModel->GetDataObject();
+                if (!obj) {
+                    showDarkFramelessMessage(QStringLiteral("无可用数据"),
+                                             QStringLiteral("当前模型没有可用的网格数据。"));
+                    return;
+                }
+
+                auto attrs = obj->GetAttributeSet();
+                std::vector<IGsize> attrIndices;
+                std::vector<QString> attrNames;
+                if (attrs) {
+                    for (IGsize i = 0; i < static_cast<IGsize>(attrs->GetNumberOfAttributes()); ++i) {
+                        auto& attr = attrs->GetAttribute(i);
+                        if (attr.isDeleted || !attr.pointer) continue;
+                        if (attr.pointer->GetDimension() < 3) continue; // 只显示向量(>=3分量)
+                        attrIndices.push_back(i);
+                        const QString attach =
+                                attr.attachmentType == IG_CELL ? QStringLiteral("Cell") : QStringLiteral("Point");
+                        attrNames.push_back(
+                                QStringLiteral("%1 (%2)").arg(QString::fromStdString(attr.pointer->GetName()), attach));
+                    }
+                }
+                if (attrNames.empty()) {
+                    showDarkFramelessMessage(QStringLiteral("Warning"),
+                                             QStringLiteral("当前模型没有可用于投影的向量属性（需要3分量及以上）。"));
+                    return;
+                }
+
+                auto* dialog = new igQtFilterDialogDockWidget(this, true);
+                dialog->setFilterTitle(QStringLiteral("Surface Vectors"));
+                dialog->setFilterDescription(
+                        QStringLiteral("将指定向量投影到表面，结果写回同名数组（与 ParaView 一致）。"
+                                       "支持表面网格与非结构化网格。"));
+
+                const int vecAttrId = dialog->addParameter(
+                        igQtFilterDialogDockWidget::QT_COMBO_BOX, QStringLiteral("向量属性"), attrNames);
+                const int modeId = dialog->addParameter(
+                        igQtFilterDialogDockWidget::QT_COMBO_BOX, QStringLiteral("约束模式"),
+                        std::vector<QString>{
+                                QStringLiteral("Parallel (切向: v-(v·n)·n)"),
+                                QStringLiteral("Perpendicular (法向: (v·n)·n)"),
+                                QStringLiteral("PerpendicularScale (标量: v·n)"),
+                        });
+                dialog->show();
+
+                dialog->setApplyFunctor([=, this]() {
+                    bool ok = false;
+                    const int choice = dialog->getComboIndex(vecAttrId, ok);
+                    if (!ok || choice < 0 || choice >= static_cast<int>(attrIndices.size())) {
+                        showDarkFramelessMessage(QStringLiteral("参数错误"),
+                                                 QStringLiteral("请选择有效的向量属性。"));
+                        return;
+                    }
+                    const int mode = dialog->getComboIndex(modeId, ok);
+                    if (!ok || mode < 0 || mode > 2) {
+                        showDarkFramelessMessage(QStringLiteral("参数错误"),
+                                                 QStringLiteral("请选择有效的约束模式。"));
+                        return;
+                    }
+
+                    const auto& attr = obj->GetAttributeSet()->GetAttribute(
+                            static_cast<IGsize>(attrIndices[static_cast<size_t>(choice)]));
+                    // 提前保存属性名：filter 会原位替换 attrSet 中的数组对象，
+                    // Execute 后不再通过该引用访问
+                    const QString attrName = QString::fromStdString(attr.pointer->GetName());
+
+                    SurfaceVectorsFilter::Pointer filter = SurfaceVectorsFilter::New();
+                    filter->SetVectorAttributeByName(attr.pointer->GetName());
+                    filter->SetConstraintMode(
+                            static_cast<SurfaceVectorsFilter::ConstraintMode>(mode));
+                    filter->SetInput(obj);
+
+                    if (!filter->Execute()) {
+                        showDarkFramelessMessage(
+                                QStringLiteral("执行失败"),
+                                QStringLiteral("向量投影失败，仅支持表面网格和非结构化网格。"));
+                        return;
+                    }
+
+                    auto outObj = filter->GetOutput();
+                    if (!outObj) {
+                        showDarkFramelessMessage(QStringLiteral("执行失败"),
+                                                 QStringLiteral("向量投影没有生成有效输出。"));
+                        return;
+                    }
+
+                    modelTreeWidget->addDataObjectToModelTree(outObj, Algorithm);
+                    rendererWidget->update();
+                    showDarkFramelessMessage(
+                            QStringLiteral("向量投影完成"),
+                            QStringLiteral("已将向量按选定模式投影，结果写回属性 \"%1\"。")
+                                    .arg(attrName),
+                            true);
+                    dialog->close();
+                });
+            });
+
 }
 
 void igQtMainWindow::initAllDockWidgetConnectWithAction() {
