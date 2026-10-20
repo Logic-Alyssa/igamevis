@@ -191,7 +191,6 @@
 #include <limits>
 #include <QMenu>
 #include <QAction>
-#include <IQWidgets/igQtDataSpreadsheetWidget.h>
 
 #include <cmath>
 
@@ -1242,40 +1241,6 @@ void igQtMainWindow::initAllUnDefinedComponents() {
 
     // 设置DockWidget的默认大小
     aiChatDockWidget->resize(400, 600);
-
-    // ===== 数据表视图（对标 ParaView Spreadsheet View）=====
-    // 底部停靠，默认隐藏；菜单「视图 -> 数据表视图 (Spreadsheet)」开关。
-    DataSpreadsheetDockWidget = new QDockWidget(QStringLiteral("数据表视图 (Spreadsheet)"), this);
-    DataSpreadsheetDockWidget->setObjectName(QStringLiteral("dockWidget_DataSpreadsheet"));
-    DataSpreadsheetDockWidget->setFeatures(QDockWidget::DockWidgetClosable |
-                                           QDockWidget::DockWidgetMovable);
-    DataSpreadsheetWidget = new igQtDataSpreadsheetWidget(DataSpreadsheetDockWidget);
-    DataSpreadsheetDockWidget->setWidget(DataSpreadsheetWidget);
-    this->addDockWidget(Qt::BottomDockWidgetArea, DataSpreadsheetDockWidget);
-    DataSpreadsheetDockWidget->hide();
-
-    // 选中模型变化 / dock 变为可见时刷新表格内容
-    auto refreshDataSpreadsheet = [this]() {
-        if (!DataSpreadsheetWidget || !DataSpreadsheetDockWidget->isVisible()) return;
-        auto model = rendererWidget ? rendererWidget->GetScene()->GetCurrentModel() : nullptr;
-        DataSpreadsheetWidget->SetDataObject(model ? model->GetDataObject()
-                                                   : iGame::DataObject::Pointer{});
-    };
-    connect(modelTreeWidget, &igQtModelDialogWidget::CurrendModelChanged, this,
-            refreshDataSpreadsheet);
-    connect(DataSpreadsheetDockWidget, &QDockWidget::visibilityChanged, this,
-            [refreshDataSpreadsheet](bool visible) {
-                if (visible) refreshDataSpreadsheet();
-            });
-
-    // 菜单开关：固定在「视图」菜单第一项（checkable，与 dock 显隐双向同步）
-    auto* spreadsheetAction = new QAction(QStringLiteral("数据表视图 (Spreadsheet)"), this);
-    spreadsheetAction->setCheckable(true);
-    ui->menu_view->insertAction(ui->menu_view->actions().value(0), spreadsheetAction);
-    connect(spreadsheetAction, &QAction::triggered, DataSpreadsheetDockWidget,
-            &QDockWidget::setVisible);
-    connect(DataSpreadsheetDockWidget, &QDockWidget::visibilityChanged, spreadsheetAction,
-            &QAction::setChecked);
 
     // 将原本右侧的 dockwidget 移到左侧（后续统一加入左侧 tab 组）
     this->addDockWidget(Qt::LeftDockWidgetArea, ui->dockWidget_ScalarField);
