@@ -20,7 +20,7 @@ else ()
     set(_IGAME_EXAMPLE_CORE_LIBS ${IGAMEVIS_CORE_LIB_TARGETS})
 endif ()
 
-find_package(HDF5 REQUIRED)
+find_package(HDF5)
 find_package(FFMPEG QUIET)
 find_package(AbqSDK QUIET)
 find_package(OpenMP QUIET)
@@ -163,7 +163,11 @@ function(igame_add_example EXAMPLE_TARGET SOURCE)
 endfunction()
 
 function(igame_link_standard_example EXAMPLE_TARGET)
-    target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS} HDF5::HDF5)
+    if (TARGET HDF5::HDF5)
+        target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS} HDF5::HDF5)
+    else ()
+        target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS})
+    endif ()
 endfunction()
 
 set(IGAME_BATCH3_EXAMPLES
@@ -758,6 +762,9 @@ igame_add_example(testPerlinNoise Filter/AttributeManipulation/TestPerlinNoise.c
 
 igame_add_example(testTextureMapToSphere Filter/TextureMapToSphere/TestTextureMapToSphere.cpp)
 igame_add_example(testResampleWithDataSet Filter/TestResampleWithDataSet.cpp)
+
+# Batch 2 filter aligned with ParaView (Append Datasets).
+igame_add_example(testAppendDatasets Filter/TestAppendDatasets.cpp)
 
 get_property(IGAME_EXAMPLE_TARGETS DIRECTORY PROPERTY IGAME_EXAMPLE_TARGETS)
 if (NOT IGAME_EXAMPLE_TARGETS)

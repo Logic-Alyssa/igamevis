@@ -60,7 +60,7 @@
 #include "AttributeManipulation/iGameRandomVectorsFilter.h"
 #include "AttributeManipulation/iGamePerlinNoiseFilter.h"
 
-#include "AppendReduce/iGameAppendReduceFilter.h"
+#include "AppendDatasets/iGameAppendDatasetsFilter.h"
 #include "AppendArcLength/iGameAppendArcLengthFilter.h"
 #include "Histogram/iGameHistogramFilter.h"
 #include "Tube/iGameTube.h"
@@ -81,3 +81,18 @@
 #include "Connectivity/iGameConnectivityFilter.h"
 #include "ReverseSense/iGameReverseSenseFilter.h"
 #include "WarpByVector/iGameWarpByVectorFilter.h"
+
+// 以下 Filter 在 Qt 前端直接使用，统一注册以保证中央头可达
+#include "Selection/iGameExtractCellsByRegionFilter.h"
+#include "BuildAdjacencyRelation/iGameBuildAdjacencyRelationFilter.h"
+#include "Convert/iGameConvertToCellDataFilter.h"
+#include "Convert/iGameConvertToLagrangeUnstructuredMeshFilter.h"
+#include "Convert/iGameConvertToPointDataFilter.h"
+#include "Convert/iGamePointSetToOctreeFilter.h"
+#include "DataProcessing/iGameMeshSimplificationFilter.h"
+#include "DataProcessing/iGameMeshTriangulationFilter.h"
+#include "DataProcessing/ExtractLocation/iGameExtractLocationFilter.h"
+#include "Deformation/iGameStressDeformationFilter.h"
+#include "GhostCell/iGameGhostCellFilter.h"
+#include "Interpolation/iGamePointVolumeInterpolatorFilter.h"
+#include "MyFilter/iGameExtractCellsByTypeFilter.h"

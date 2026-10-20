@@ -9912,6 +9912,110 @@ void igQtMainWindow::initAllFilters() {
         addDevelopmentAction(developingFiltersBatch2, approvedFilter(entry.id),
                              QString::fromUtf8(entry.label));
     }
+
+
+
+    // === Append Datasets Filter: 网格合并 (对标 ParaView Append Datasets) ===
+    connect(developingFiltersBatch2->addAction(QStringLiteral("Append Datasets")),
+            &QAction::triggered, this, [&](bool checked) {
+        auto scene = rendererWidget->GetScene();
+        if (!scene) return;
+
+        auto modelList = scene->GetModelList();
+        if (!modelList) return;
+
+        int meshCount = 0;
+        for (auto it = modelList->Begin(); it != modelList->End(); ++it) {
+            auto model = it->second;
+            if (model && model->GetDataObject()) meshCount++;
+        }
+        if (meshCount < 2) {
+            showDarkFramelessMessage(QStringLiteral("提示"),
+                                     QStringLiteral("场景中至少需要 2 个网格模型才能合并。"));
+            return;
+        }
+
+        auto* dialog = new igQtFilterDialogDockWidget(this, true);
+        dialog->setFilterTitle(QStringLiteral("Append Datasets"));
+        dialog->setFilterDescription(QStringLiteral(
+                "将场景中所有网格合并为一个 UnstructuredMesh（保留原始单元类型）。\n"
+                "默认不合并重复点（与 ParaView 一致）；需要消除接缝冗余顶点时勾选「合并重复顶点」，"
+                "容差为 0 时仅合并完全重合的点。\n"
+                "属性按交集规则保留：仅保留所有输入网格都具备的属性。"));
+        const int mergeId = dialog->addParameter(
+                igQtFilterDialogDockWidget::QT_CHECK_BOX,
+                QStringLiteral("合并重复顶点 (Merge Points)"), "false");
+        const int tolId = dialog->addParameter(
+                igQtFilterDialogDockWidget::QT_LINE_EDIT,
+                QStringLiteral("合并容差"), "0");
+        dialog->show();
+
+        dialog->setApplyFunctor([=, this]() {
+            bool ok = false;
+            const bool mergePoints = dialog->getChecked(mergeId, ok);
+            float tolerance = (float) dialog->getDouble(tolId, ok);
+            if (!ok) tolerance = 0.0f; // 解析失败时回退到 ParaView 默认值 0（精确合并）
+
+            auto filter = AppendDatasetsFilter::New();
+            filter->SetMergePoints(mergePoints);
+            filter->SetTolerance(tolerance);
+
+            auto mList = rendererWidget->GetScene()->GetModelList();
+            int count = 0;
+            for (auto it = mList->Begin(); it != mList->End(); ++it) {
+                auto model = it->second;
+                if (model) {
+                    auto obj = model->GetDataObject();
+                    if (obj) {
+                        filter->AddInput(obj);
+                        count++;
+                    }
+                }
+            }
+            if (count <= 0) {
+                showDarkFramelessMessage(QStringLiteral("执行失败"),
+                                         QStringLiteral("没有可合并的输入网格。"));
+                return;
+            }
+
+            if (!filter->Execute()) {
+                showDarkFramelessMessage(QStringLiteral("执行失败"),
+                                         QString::fromStdString(filter->GetMessage()));
+                return;
+            }
+
+            auto outMesh = DynamicCast<UnstructuredMesh>(filter->GetOutput());
+            if (!outMesh) {
+                showDarkFramelessMessage(QStringLiteral("执行失败"),
+                                         QStringLiteral("合并未生成有效的非结构化网格。"));
+                return;
+            }
+            outMesh->SetName("append_datasets_result");
+
+            modelTreeWidget->addDataObjectToModelTree(outMesh, Algorithm);
+
+            // 自动激活第一个标量属性，便于立即看到颜色映射
+            auto attrSet = outMesh->GetAttributeSet();
+            if (attrSet) {
+                int activeIdx = -1;
+                for (int i = 0; i < (int) attrSet->GetNumberOfAttributes(); i++) {
+                    auto& attr = attrSet->GetAttribute(i);
+                    if (attr.IsNone() || attr.isDeleted || attr.type != IG_SCALAR) continue;
+                    activeIdx = i;
+                    break;
+                }
+                if (activeIdx >= 0) {
+                    outMesh->ViewCloudPicture(rendererWidget->GetScene(), activeIdx, 0);
+                }
+            }
+            rendererWidget->update();
+            showDarkFramelessMessage(QStringLiteral("合并完成"),
+                                     QStringLiteral("已合并 %1 个网格为单一 UnstructuredMesh。").arg(count),
+                                     true);
+            dialog->close();
+        });
+    });
+
 }
 
 void igQtMainWindow::initAllDockWidgetConnectWithAction() {
