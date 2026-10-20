@@ -57,6 +57,7 @@ class igQtPointSetToOctreeWidget;
 class igQtGlobalIdWidget;
 class igQtTriangleStripWidget;
 class igQtExtractCellsByTypeWidget;
+class igQtExtractTimeStepsWidget;
 class igQtAxisAlignedReflectionWidget;
 class igQtPointAndCellIdsWidget;
 class igQtSmoothWidget;
@@ -85,6 +86,7 @@ public:
         Selection,
         VariableDensity,
         DataChange,
+        ExtractTimeSteps,
         MedianFilter,
         ResampleToImage,
         Count
@@ -207,6 +209,9 @@ private:
     // 左侧工具 Tab（按需添加；下方 Properties 常驻）
     QDockWidget* m_leftFieldDock = nullptr;
     QTabWidget* m_leftFieldTabs = nullptr;
+    // 保留指定时间步：左侧工具面板（对齐 ParaView 的 Extract Time Steps，只裁剪时间轴）
+    QDockWidget* m_extractTimeStepsShell = nullptr;
+    igQtExtractTimeStepsWidget* m_extractTimeStepsWidget = nullptr;
     // 按单元类型提取：左侧面板 + 壳 Dock + 常驻 filter
     // 首次提取生成独立新模型 ExtractCellsByType_n（不覆盖输入模型）；
     // 改勾选重提取时，原地更新该新模型（模型树不新增节点）
