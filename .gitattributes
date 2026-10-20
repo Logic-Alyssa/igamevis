@@ -77,3 +77,8 @@ Examples/Models/AppendDatasets_B_hex_block.vtk -filter -diff -merge text
 Examples/Models/AppendDatasets_B_tet_mesh.vtk -filter -diff -merge text
 Examples/Models/AppendDatasets_C_hill_left.vtk -filter -diff -merge text
 Examples/Models/AppendDatasets_C_hill_right.vtk -filter -diff -merge text
+
+# Small text fixtures for the ParaView-aligned batch-2 filter (Surface Vectors).
+Examples/Models/SurfaceVectors_A_sphere.vtk -filter -diff -merge text
+Examples/Models/SurfaceVectors_B_hill.vtk -filter -diff -merge text
+Examples/Models/SurfaceVectors_C_cylinder.vtk -filter -diff -merge text
