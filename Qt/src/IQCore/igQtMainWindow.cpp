@@ -2,6 +2,8 @@
 #include "IQCore/igQtMainWindow.h"
 #include <IQWidgets/igQtProbeWidget.h>
 #include <map>
+#include <QCheckBox>
+#include <QSignalBlocker>
 //
 // Created by m_ky on 2024/4/10.
 //
@@ -8142,28 +8144,45 @@ void igQtMainWindow::initAllFilters() {
                         }
                     }
                 }
-                if (pointTensors.empty() && cellTensors.empty()) {
-                    showDarkFramelessMessage(
-                            QStringLiteral("屈服准则"),
-                            QStringLiteral("当前模型没有 6 或 9 分量的张量数组（例如应力）"));
-                    return;
-                }
 
-                // 多选列表：用对话框现有的 addRowWidget 追加自定义控件（标签 + 可多选的 QListWidget），
-                // 不修改通用的 igQtFilterDialogDockWidget 类。
+                // ParaView-style checkable groups with select-all/partial state.
                 auto makeTensorList = [](const QString& title,
                                          const std::vector<QString>& names) -> QListWidget* {
                     auto* row = new QWidget;
                     auto* layout = new QVBoxLayout(row);
                     layout->setContentsMargins(0, 0, 0, 0);
                     layout->setSpacing(2);
-                    auto* label = new QLabel(title, row);
+                    auto* label = new QCheckBox(title, row);
+                    label->setTristate(true);
                     layout->addWidget(label);
                     auto* list = new QListWidget(row);
-                    list->setSelectionMode(QAbstractItemView::ExtendedSelection);
+                    list->setSelectionMode(QAbstractItemView::NoSelection);
                     list->setAlternatingRowColors(true);
-                    for (const auto& name : names) { list->addItem(name); }
-                    if (list->count() > 0) { list->setCurrentRow(0); }
+                    for (const auto& name : names) {
+                        auto* item = new QListWidgetItem(name, list);
+                        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+                        item->setCheckState(Qt::Unchecked);
+                    }
+                    if (list->count() > 0) { list->item(0)->setCheckState(Qt::Checked); }
+                    auto syncGroup = [list, label]() {
+                        int checked = 0;
+                        for (int i = 0; i < list->count(); ++i)
+                            checked += list->item(i)->checkState() == Qt::Checked;
+                        QSignalBlocker blocker(label);
+                        label->setCheckState(checked == 0 ? Qt::Unchecked :
+                            checked == list->count() ? Qt::Checked : Qt::PartiallyChecked);
+                    };
+                    QObject::connect(list, &QListWidget::itemChanged, row,
+                                     [syncGroup](QListWidgetItem*) { syncGroup(); });
+                    QObject::connect(label, &QCheckBox::clicked, row, [list, syncGroup](bool checked) {
+                        {
+                            QSignalBlocker blocker(list);
+                            for (int i = 0; i < list->count(); ++i)
+                                list->item(i)->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
+                        }
+                        syncGroup();
+                    });
+                    syncGroup();
                     // 高度自适应：AdjustToContents 会让 sizeHint 反映全部条目的真实高度
                     // （注意 sizeHintForRow 往往略小于实际行高，按它估算会差几像素而出现滚动条），
                     // 这里直接把 sizeHint 作为最小高度，条目很多时再用 maximumHeight 限制。
@@ -8179,7 +8198,8 @@ void igQtMainWindow::initAllFilters() {
                 auto* dialog = new igQtFilterDialogDockWidget(this, true);
                 dialog->setFilterTitle(QStringLiteral("屈服准则"));
                 dialog->setFilterDescription(
-                        QStringLiteral("对张量数组求主应力，按所选准则输出结果数组（列表可多选，Ctrl / Shift 加选）"));
+                        QStringLiteral("勾选需要计算的结果，可同时选择多个；全部不勾选时输出原模型的数据副本。"
+                                       "各分组标题可全选或取消全选。"));
                 QListWidget* pointList = nullptr;
                 QListWidget* cellList = nullptr;
                 if (!pointTensors.empty()) {
@@ -8190,10 +8210,9 @@ void igQtMainWindow::initAllFilters() {
                     cellList = makeTensorList(QStringLiteral("单元张量 (Cell Tensors)"), cellTensors);
                     dialog->addRowWidget(cellList->parentWidget());
                 }
-                const std::vector<QString> criteria = {QStringLiteral("主应力 (Principal Stress)"),
-                                                       QStringLiteral("Tresca 准则"),
-                                                       QStringLiteral("von Mises 准则")};
-                auto* criterionList = makeTensorList(QStringLiteral("屈服准则 (Yield Criteria)"), criteria);
+                auto* criterionList = makeTensorList(QStringLiteral("屈服准则 (Yield Criteria)"),
+                        {QStringLiteral("Principal Stress"), QStringLiteral("Tresca Criterion"),
+                         QStringLiteral("Von Mises Criterion")});
                 dialog->addRowWidget(criterionList->parentWidget());
                 dialog->show();
                 dialog->setApplyFunctor([=, this]() {
@@ -8201,31 +8220,21 @@ void igQtMainWindow::initAllFilters() {
                     std::vector<std::string> selectedTensors;
                     auto collect = [&selectedTensors](QListWidget* list) {
                         if (list == nullptr) { return; }
-                        for (auto* item : list->selectedItems()) {
-                            if (item != nullptr) { selectedTensors.push_back(item->text().toStdString()); }
+                        for (int i = 0; i < list->count(); ++i) {
+                            auto* item = list->item(i);
+                            if (item->checkState() == Qt::Checked) selectedTensors.push_back(item->text().toStdString());
                         }
                     };
                     collect(pointList);
                     collect(cellList);
-                    if (selectedTensors.empty()) {
-                        showDarkFramelessMessage(QStringLiteral("错误"),
-                                                 QStringLiteral("请至少选择一个张量数组。"));
-                        return;
-                    }
-                    // 收集选中的屈服准则（列表顺序：主应力 / Tresca / von Mises）
                     std::vector<YieldCriteriaFilter::Criterion> selectedCriteria;
-                    for (auto* item : criterionList->selectedItems()) {
-                        if (item == nullptr) { continue; }
-                        switch (criterionList->row(item)) {
-                            case 0: selectedCriteria.push_back(YieldCriteriaFilter::PRINCIPAL_STRESS); break;
-                            case 1: selectedCriteria.push_back(YieldCriteriaFilter::TRESCA); break;
-                            case 2: selectedCriteria.push_back(YieldCriteriaFilter::VON_MISES); break;
-                            default: break;
-                        }
+                    for (int i = 0; i < criterionList->count(); ++i) {
+                        if (criterionList->item(i)->checkState() == Qt::Checked)
+                            selectedCriteria.push_back(static_cast<YieldCriteriaFilter::Criterion>(i));
                     }
-                    if (selectedCriteria.empty()) {
+                    if (!selectedCriteria.empty() && selectedTensors.empty()) {
                         showDarkFramelessMessage(QStringLiteral("错误"),
-                                                 QStringLiteral("请至少选择一个屈服准则。"));
+                                                 QStringLiteral("请至少选择一个 6 或 9 分量的张量数组。"));
                         return;
                     }
 

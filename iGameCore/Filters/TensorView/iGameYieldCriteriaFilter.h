@@ -45,13 +45,13 @@ public:
     /// 返回第一个张量属性名（未设置时为空串）
     std::string GetTensorArrayName() const;
 
-    /// 参与计算的屈服准则（可多个，会逐个输出各自的结果数组）；为空则按主应力处理
+    /// 参与计算的屈服准则（可多个）；为空则输出输入数据的副本，不追加结果数组。
     void SetCriteria(const std::vector<Criterion>& criteria);
     const std::vector<Criterion>& GetCriteria() const;
 
     /// 便捷接口：只设置一个准则（等价于 SetCriteria({criterion})）
     void SetCriterion(Criterion criterion);
-    /// 返回第一个准则（默认主应力）。m_Criteria 恒非空，故可安全返回引用。
+    /// 返回第一个准则；列表为空时返回主应力作为便捷接口的默认值。
     const Criterion& GetCriterion() const;
 
     /// 上一次执行的说明（失败原因 / 实际处理的张量属性与准则）
