@@ -1851,6 +1851,28 @@ void igQtMainWindow::showDarkFramelessMessage(const QString& title, const QStrin
     igQtShowDarkFramelessMessage(this, title, text, useInformationIcon);
 }
 
+struct QuartileReportRow {
+    QString name;
+    QString attach;
+    double  min, q1, median, q3, max;
+};
+
+void showQuartilesReportDialog(QWidget* parent, const QVector<QuartileReportRow>& rows) {
+    QString report;
+    for (const auto& r : rows) {
+        report += QStringLiteral("%1 (%2): Min=%3  Q1=%4  Median=%5  Q3=%6  Max=%7\n")
+                          .arg(r.name)
+                          .arg(r.attach)
+                          .arg(r.min)
+                          .arg(r.q1)
+                          .arg(r.median)
+                          .arg(r.q3)
+                          .arg(r.max);
+    }
+    igQtDarkFramelessMessageDialog dlg(parent, QStringLiteral("四分位数统计结果"), report.trimmed(), true);
+    dlg.exec();
+}
+
 void igQtMainWindow::initAllFilters() {
     /* Data Processing 前两档：加宽以容纳较长参数标签，并关闭参数区滚动条（内容较少无需滚动） */
     auto tuneMeshSimplifyFilterDialog = [](igQtFilterDialogDockWidget* d) {
