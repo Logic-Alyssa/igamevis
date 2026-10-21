@@ -15,6 +15,9 @@ public:
     void SetSphere(const Vector3d& center, double radius);
     void SetRequireAllPoints(bool requireAllPoints);
 
+    // Compute the selected input cell IDs without creating an output mesh.
+    bool Preview();
+    const std::vector<int>& GetSelectedCellIds() const { return m_Ids; }
     bool Execute() override;
 
 protected:

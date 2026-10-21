@@ -70,6 +70,9 @@ Examples/Models/RenameResample_test.vtk -filter -diff -merge text
 Examples/Models/AppendArcLength_test.vtk -filter -diff -merge text
 Examples/Models/Histogram_test.vtk -filter -diff -merge text
 
+# Region extraction fixtures are small plain-text models.
+Examples/Models/ExtractCellsByRegion_BoxCases.vtk -filter -diff -merge text
+Examples/Models/ExtractCellsByRegion_SphereCases.vtk -filter -diff -merge text
 # Small text fixtures for the ParaView-aligned batch-2 filter (Append Datasets).
 Examples/Models/AppendDatasets_A_curved_patch_left.vtk -filter -diff -merge text
 Examples/Models/AppendDatasets_A_curved_patch_right.vtk -filter -diff -merge text
