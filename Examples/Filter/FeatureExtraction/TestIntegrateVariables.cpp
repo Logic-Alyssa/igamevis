@@ -1,3 +1,5 @@
+// 测试命名整理（待提交）：原文件 IntegrateVariables.cpp 未遵循 Test 前缀约定。
+// 重命名为 TestIntegrateVariables.cpp；保持 testIntegrateVariables 目标与原有用例行为不变。
 #include "IntegrateVariables/iGameIntegrateVariablesFilter.h"
 #include "iGameAttributeSet.h"
 #include "iGameCellType.h"

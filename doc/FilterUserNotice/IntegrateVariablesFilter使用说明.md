@@ -126,7 +126,7 @@ std::cout << filter->GetMeasureName() << ": "
 示例代码：
 
 ```text
-Examples/Filter/FeatureExtraction/IntegrateVariables.cpp
+Examples/Filter/FeatureExtraction/TestIntegrateVariables.cpp
 ```
 
 编译与运行：
