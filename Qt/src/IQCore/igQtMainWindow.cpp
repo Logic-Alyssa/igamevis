@@ -34,6 +34,7 @@
 #include "WarpByScalar/iGameWarpByScalarFilter.h"
 #include "Deformation/iGameStressDeformationFilterCode.h"
 #include "ExtractEnclosedPoints/iGameExtractEnclosedPointsFilter.h"
+#include "PointPlaneInterpolator/iGamePointPlaneInterpolatorFilter.h"
 
 #include "DataProcessing/Tests/iGameGradient.h"
 #include "FeatureExtraction/iGameAdvancedGradientFilter.h"
@@ -161,6 +162,7 @@
 #include <iGameDataSource.h>
 #include <iGameDynamicBox.h>
 #include <iGamePointFinder.h>
+#include <iGameSelection.h>
 #include <iGameSelectionParameter.h>
 #include <iGameUnstructuredMesh.h>
 #include <iGameVolumeMesh.h>
@@ -9653,6 +9655,375 @@ void igQtMainWindow::initAllFilters() {
             .arg(static_cast<qulonglong>(filter->GetNumberOfProcessedLines())),
             true);
         });
+
+
+    // 点平面插值 (Point Plane Interpolator) 
+    QAction* pointPlaneInterpolatorAction =
+            developingFiltersBatch2->addAction(QStringLiteral("点平面插值 (Point Plane Interpolator)"));
+    connect(pointPlaneInterpolatorAction, &QAction::triggered, this, [this](bool) {
+        auto* scene = rendererWidget->GetScene();
+        auto model = scene ? scene->GetCurrentModel() : nullptr;
+        auto input = model ? model->GetDataObject() : nullptr;
+        if (!input || !DynamicCast<PointSet>(input)) {
+            showDarkFramelessMessage(QStringLiteral("点平面插值"), QStringLiteral("请先加载并选择一个点集或网格。"));
+            return;
+        }
+
+        // 如果已经存在，彻底销毁旧的，防止底层手柄重叠和状态污染
+        for (int i = 0; i < m_leftFieldTabs->count(); ++i) {
+            if (m_leftFieldTabs->tabText(i) == QStringLiteral("点平面插值")) {
+                QWidget* oldPage = m_leftFieldTabs->widget(i);
+                m_leftFieldTabs->removeTab(i);
+                oldPage->deleteLater();
+            }
+        }
+
+        // 1. 创建 Tab 容器及滚动区域
+        QWidget* page = new QWidget();
+        QVBoxLayout* pageLayout = new QVBoxLayout(page);
+        pageLayout->setContentsMargins(0, 0, 0, 0);
+        pageLayout->setSpacing(0);
+
+        QScrollArea* scroll = new QScrollArea(page);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setStyleSheet("QScrollArea { background: transparent; } QScrollArea > QWidget > QWidget { background: "
+                              "transparent; }");
+
+        QWidget* body = new QWidget(scroll);
+
+        // 统一使用基础 QSS 并挂载主题自适应
+        QString baseQss =
+                "QWidget { background-color: transparent; color: #EAEAEA; font-size: 13px; }"
+                "QLabel { color: #D8D8D8; background: transparent; font-size: 13px; padding-top: 4px; }"
+                "QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox { background-color: #2A2A2A; color: #EAEAEA; "
+                "border: 1px solid #3A3A3A; padding: 3px 6px; border-radius: 3px; font-size: 13px; min-height: 20px; }"
+                "QComboBox::drop-down { border: none; background: transparent; width: 20px; }"
+                "QComboBox QAbstractItemView { background-color: #2A2A2A; color: #EAEAEA; selection-background-color: "
+                "#3A3A3A; }"
+                "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 16px; border: none; background: "
+                "transparent; }"
+                "QPushButton { background-color: #2A2A2A; color: #EAEAEA; border: 1px solid #3A3A3A; padding: 6px "
+                "12px; border-radius: 4px; font-size: 13px; }"
+                "QPushButton:hover { background-color: #3A3A3A; }"
+                "QGroupBox { border: 1px solid #3A3A3A; border-radius: 4px; margin-top: 8px; padding-top: 12px; }"
+                "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; color: "
+                "#D8D8D8; }";
+
+        body->setStyleSheet(baseQss);
+        igQtPanelTheme::attach(body);
+
+        QVBoxLayout* mainLayout = new QVBoxLayout(body);
+        mainLayout->setContentsMargins(10, 10, 10, 10);
+        mainLayout->setSpacing(10);
+
+        QLabel* inputLabel = new QLabel(QStringLiteral("输入：") + QString::fromStdString(input->GetName()));
+        inputLabel->setStyleSheet("color: #FFFFFF; font-weight: bold;");
+        inputLabel->setProperty("igPanelBaseQss", inputLabel->styleSheet());
+        igQtPanelTheme::refresh(inputLabel);
+        mainLayout->addWidget(inputLabel);
+
+        auto bbox = input->GetBoundingBox();
+        double cx = (bbox.min[0] + bbox.max[0]) * 0.5;
+        double cy = (bbox.min[1] + bbox.max[1]) * 0.5;
+        double cz = (bbox.min[2] + bbox.max[2]) * 0.5;
+
+        // ================= 2. 平面参数分组 =================
+        QGroupBox* groupPlane = new QGroupBox(QStringLiteral("平面参数"), body);
+        QFormLayout* formPlane = new QFormLayout(groupPlane);
+        formPlane->setSpacing(6);
+
+        QDoubleSpinBox* originX = new QDoubleSpinBox(groupPlane);
+        originX->setRange(-1e9, 1e9);
+        originX->setValue(cx);
+        originX->setDecimals(4);
+        QDoubleSpinBox* originY = new QDoubleSpinBox(groupPlane);
+        originY->setRange(-1e9, 1e9);
+        originY->setValue(cy);
+        originY->setDecimals(4);
+        QDoubleSpinBox* originZ = new QDoubleSpinBox(groupPlane);
+        originZ->setRange(-1e9, 1e9);
+        originZ->setValue(cz);
+        originZ->setDecimals(4);
+
+        QDoubleSpinBox* normalX = new QDoubleSpinBox(groupPlane);
+        normalX->setRange(-1, 1);
+        normalX->setValue(1.0);
+        normalX->setDecimals(4);
+        QDoubleSpinBox* normalY = new QDoubleSpinBox(groupPlane);
+        normalY->setRange(-1, 1);
+        normalY->setValue(0.0);
+        normalY->setDecimals(4);
+        QDoubleSpinBox* normalZ = new QDoubleSpinBox(groupPlane);
+        normalZ->setRange(-1, 1);
+        normalZ->setValue(0.0);
+        normalZ->setDecimals(4);
+
+        QSignalBlocker b1(originX), b2(originY), b3(originZ);
+        QSignalBlocker b4(normalX), b5(normalY), b6(normalZ);
+
+        formPlane->addRow(QStringLiteral("原点 X："), originX);
+        formPlane->addRow(QStringLiteral("原点 Y："), originY);
+        formPlane->addRow(QStringLiteral("原点 Z："), originZ);
+        formPlane->addRow(QStringLiteral("法向 X："), normalX);
+        formPlane->addRow(QStringLiteral("法向 Y："), normalY);
+        formPlane->addRow(QStringLiteral("法向 Z："), normalZ);
+        mainLayout->addWidget(groupPlane);
+
+        // ================= 3. 插值设置分组 =================
+        QGroupBox* groupInterp = new QGroupBox(QStringLiteral("插值设置"), body);
+        QFormLayout* formInterp = new QFormLayout(groupInterp);
+        formInterp->setSpacing(6);
+
+        QSpinBox* res = new QSpinBox(groupInterp);
+        res->setRange(2, 1024);
+        res->setValue(100);
+        formInterp->addRow(QStringLiteral("分辨率："), res);
+
+        QComboBox* kernel = new QComboBox(groupInterp);
+        kernel->addItems({QStringLiteral("Voronoi"), QStringLiteral("Gaussian"), QStringLiteral("Shepard")});
+        formInterp->addRow(QStringLiteral("插值核："), kernel);
+
+        QComboBox* footprint = new QComboBox(groupInterp);
+        footprint->addItems({QStringLiteral("Radius"), QStringLiteral("N Closest")});
+        formInterp->addRow(QStringLiteral("邻域搜索："), footprint);
+
+        QDoubleSpinBox* radius = new QDoubleSpinBox(groupInterp);
+        radius->setRange(0.0001, 1e6);
+        radius->setValue(std::max(0.001, static_cast<double>(bbox.diag()) / 10));
+        formInterp->addRow(QStringLiteral("半径："), radius);
+
+        QSpinBox* nClosest = new QSpinBox(groupInterp);
+        nClosest->setRange(1, 1000);
+        nClosest->setValue(8);
+        formInterp->addRow(QStringLiteral("最近邻点数："), nClosest);
+
+        QDoubleSpinBox* sharpness = new QDoubleSpinBox(groupInterp);
+        sharpness->setRange(0.0001, 100);
+        sharpness->setValue(2.0);
+        formInterp->addRow(QStringLiteral("高斯锐度："), sharpness);
+
+        QDoubleSpinBox* power = new QDoubleSpinBox(groupInterp);
+        power->setRange(0.0001, 100);
+        power->setValue(2.0);
+        formInterp->addRow(QStringLiteral("Shepard幂次："), power);
+
+        QComboBox* nullStrategy = new QComboBox(groupInterp);
+        nullStrategy->addItems({QStringLiteral("掩码"), QStringLiteral("空值"), QStringLiteral("最近点")});
+        nullStrategy->setCurrentIndex(2);
+        formInterp->addRow(QStringLiteral("空邻域："), nullStrategy);
+        mainLayout->addWidget(groupInterp);
+
+        // ================= 4. 动态显隐逻辑 =================
+        auto updateUIState = [=]() {
+            int k = kernel->currentIndex();
+            int f = footprint->currentIndex();
+            bool isVoronoi = (k == 0), isGaussian = (k == 1), isShepard = (k == 2);
+
+            if (auto* l = formInterp->labelForField(footprint)) l->setVisible(!isVoronoi);
+            footprint->setVisible(!isVoronoi);
+
+            bool showRadius = !isVoronoi && (f == 0), showNClosest = !isVoronoi && (f == 1);
+            if (auto* l = formInterp->labelForField(radius)) l->setVisible(showRadius);
+            radius->setVisible(showRadius);
+            if (auto* l = formInterp->labelForField(nClosest)) l->setVisible(showNClosest);
+            nClosest->setVisible(showNClosest);
+
+            if (auto* l = formInterp->labelForField(sharpness)) l->setVisible(isGaussian);
+            sharpness->setVisible(isGaussian);
+            if (auto* l = formInterp->labelForField(power)) l->setVisible(isShepard);
+            power->setVisible(isShepard);
+        };
+        connect(kernel, qOverload<int>(&QComboBox::currentIndexChanged), page,
+                [updateUIState](int) { updateUIState(); });
+        connect(footprint, qOverload<int>(&QComboBox::currentIndexChanged), page,
+                [updateUIState](int) { updateUIState(); });
+        kernel->setCurrentIndex(0);
+        updateUIState();
+
+        QLabel* tip = new QLabel(
+                QStringLiteral("提示：左键拖拽手柄平移/旋转，右键旋转视角。\n如被遮挡，可直接修改上方数值。"), body);
+        tip->setStyleSheet("color: #888888; font-size: 12px; margin-top: 10px;");
+        mainLayout->addWidget(tip);
+
+        // ================= 5. 状态与按钮 =================
+        QLabel* status = new QLabel(body);
+        status->setStyleSheet("color: #A0A0A0; font-weight: bold; margin-top: 5px;");
+        mainLayout->addWidget(status);
+
+        QPushButton* applyBtn = new QPushButton(QStringLiteral("应用"), body);
+        applyBtn->setStyleSheet("QPushButton { background-color: #2A2A2A; color: #EAEAEA; border: 1px solid #3A3A3A; "
+                                "padding: 8px; border-radius: 4px; font-weight: bold; margin-top: 5px; } "
+                                "QPushButton:hover { background-color: #3A3A3A; border-color: #4A4A4A; }");
+        applyBtn->setProperty("igPanelBaseQss", applyBtn->styleSheet());
+        igQtPanelTheme::refresh(applyBtn);
+
+        mainLayout->addWidget(applyBtn);
+        mainLayout->addStretch();
+
+        scroll->setWidget(body);
+        pageLayout->addWidget(scroll);
+
+        // ================= 6. 核心逻辑初始化 =================
+        auto selection = ClipSelection::New();
+        selection->PlanePoint = Vector3d(cx, cy, cz);
+        selection->PlaneNormal = Vector3d(1.0, 0.0, 0.0);
+
+        // 7. 直接应用 按钮绑定
+        connect(applyBtn, &QPushButton::clicked, page, [=]() mutable {
+            status->setText(QStringLiteral("计算中..."));
+            auto filter = PointPlaneInterpolatorFilter::New();
+            filter->SetInput(input);
+            filter->SetOrigin(Point(selection->PlanePoint[0], selection->PlanePoint[1], selection->PlanePoint[2]));
+
+            Vector3d n(selection->PlaneNormal[0], selection->PlaneNormal[1], selection->PlaneNormal[2]);
+            if (n.norm() > 1e-6) n = n.normalized();
+            filter->SetNormal(Point(n[0], n[1], n[2]));
+
+            filter->SetResolution(res->value());
+            filter->SetKernelType(static_cast<PointPlaneInterpolatorFilter::KernelType>(kernel->currentIndex()));
+            filter->SetKernelFootprint(
+                    static_cast<PointPlaneInterpolatorFilter::KernelFootprint>(footprint->currentIndex()));
+            filter->SetRadius(radius->value());
+            filter->SetNumberOfPoints(nClosest->value());
+            filter->SetSharpness(sharpness->value());
+            filter->SetPowerParameter(power->value());
+            filter->SetNullPointsStrategy(
+                    static_cast<PointPlaneInterpolatorFilter::NullPointsStrategy>(nullStrategy->currentIndex()));
+
+            if (filter->Execute()) {
+                auto output = filter->GetOutput();
+                if (!output) return;
+
+                std::string targetName = input->GetName() + "_PlaneInterpolated";
+                output->SetName(targetName);
+
+                Model::Pointer existingModel = nullptr;
+                auto modelList = rendererWidget->GetScene()->GetModelList();
+                for (auto it = modelList->Begin(); it != modelList->End(); ++it) {
+                    if (it->second->GetDataObject()->GetName() == targetName) {
+                        existingModel = it->second;
+                        break;
+                    }
+                }
+
+                if (!existingModel) {
+                    int id = modelTreeWidget->addDataObjectToModelTree(output, Algorithm);
+                    existingModel = rendererWidget->GetScene()->GetModelById(id);
+                } else {
+                    existingModel->SetDataObject(output);
+                    modelTreeWidget->updateItemName(output);
+                    modelTreeWidget->updateAllAttriubute(output);
+                }
+
+                if (existingModel) rendererWidget->GetScene()->SetCurrentModel(existingModel);
+
+                if (auto draw = DynamicCast<DrawObject>(output)) {
+                    draw->ForceReConvertToDrawableData();
+                    auto attrSet = output->GetAttributeSet();
+                    if (attrSet && attrSet->GetNumberOfAttributes() > 0) {
+                        for (int i = 0; i < attrSet->GetNumberOfAttributes(); ++i) {
+                            auto& attr = attrSet->GetAttribute(i);
+                            if (attr.pointer && attr.attachmentType == IG_POINT &&
+                                attr.pointer->GetName() != "vtkValidPointMask") {
+                                draw->ViewCloudPicture(rendererWidget->GetScene(), i, -1);
+                                break;
+                            }
+                        }
+                    }
+                }
+                rendererWidget->update();
+                status->setText(QStringLiteral("更新成功！"));
+            } else {
+                status->setText(QStringLiteral("执行失败，请检查参数。"));
+            }
+        });
+
+        // 8. UI 与 3D 双向绑定
+        auto syncUIto3D = [=]() {
+            Vector3d n(normalX->value(), normalY->value(), normalZ->value());
+            if (n.norm() > 1e-6) n = n.normalized();
+
+            selection->PlanePoint = Vector3d(originX->value(), originY->value(), originZ->value());
+            selection->PlaneNormal = n;
+            selection->UpdatePlane();
+            rendererWidget->update();
+        };
+
+        QPointer<QWidget> pageGuard(page);
+        selection->SetSelectionCallBackEvent(
+                [=](IGenum type, const std::vector<igIndex>&, Selection::Operate) {
+                    if (type != IG_CHANGE || !pageGuard) return;
+
+                    QSignalBlocker b1(originX);
+                    originX->setValue(selection->PlanePoint[0]);
+                    QSignalBlocker b2(originY);
+                    originY->setValue(selection->PlanePoint[1]);
+                    QSignalBlocker b3(originZ);
+                    originZ->setValue(selection->PlanePoint[2]);
+                    QSignalBlocker b4(normalX);
+                    normalX->setValue(selection->PlaneNormal[0]);
+                    QSignalBlocker b5(normalY);
+                    normalY->setValue(selection->PlaneNormal[1]);
+                    QSignalBlocker b6(normalZ);
+                    normalZ->setValue(selection->PlaneNormal[2]);
+                },
+                std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
+
+        for (auto* p: {originX, originY, originZ, normalX, normalY, normalZ}) {
+            connect(p, qOverload<double>(&QDoubleSpinBox::valueChanged), page, [syncUIto3D](double) { syncUIto3D(); });
+        }
+
+        // 9. 交互器生命周期
+        QPointer<igQtRenderWidget> renderGuard(rendererWidget);
+        auto activate = [=]() {
+            if (!renderGuard) return;
+            auto interactor = scene->GetInteractor();
+            interactor->SetDataObject(input);
+            interactor->SetPainter3D(model->GetPainter3D());
+            interactor->RequestSlicingStyle(selection);
+            renderGuard->update();
+        };
+
+        auto deactivate = [=]() {
+            if (!renderGuard) return;
+            selection->SetUpdateFunction([]() {});
+            scene->GetInteractor()->RequestBasicStyle();
+            // 强制重置交互风格
+            renderGuard->ChangeInteractorStyle(iGame::Interactor::BasicStyle);
+            renderGuard->update();
+        };
+
+        // 10. 嵌入左侧工具面板
+        const int idx = m_leftFieldTabs->addTab(page, QStringLiteral("点平面插值"));
+        m_leftFieldDock->show();
+        m_leftFieldDock->raise();
+        m_leftFieldTabs->setCurrentIndex(idx);
+
+        // 11. 捕获页面销毁信号，并利用单次定时器，强制在下一帧刷新交互状态
+        connect(page, &QObject::destroyed, this, [=]() {
+            deactivate();
+            QTimer::singleShot(0, this, [this]() {
+                if (rendererWidget) { rendererWidget->ChangeInteractorStyle(iGame::Interactor::BasicStyle); }
+            });
+        });
+
+        // 12. 安全处理 Tab 关闭事件
+        QMetaObject::Connection* connPtr = new QMetaObject::Connection();
+        *connPtr = connect(m_leftFieldTabs, &QTabWidget::tabCloseRequested, this, [=](int index) {
+            if (index == m_leftFieldTabs->indexOf(pageGuard)) {
+                m_leftFieldTabs->removeTab(index);
+                pageGuard->deleteLater();
+            }
+        });
+        connect(page, &QObject::destroyed, this, [this, connPtr]() {
+            disconnect(*connPtr);
+            delete connPtr;
+        });
+
+        // 13. 激活操作杆
+        activate();
+    });
 
     // 连通区域 (Connectivity)。
     connect(developingFiltersBatch2->addAction(QStringLiteral("连通区域 (Connectivity)")),
