@@ -3807,19 +3807,19 @@ void igQtMainWindow::initAllFilters() {
         const auto sourceModelId = scene->GetCurrentModelID();
         const auto dataObject = model == nullptr ? nullptr : model->GetDataObject();
         if (model == nullptr || dataObject == nullptr ||
-            (DynamicCast<UnstructuredMesh>(dataObject).IsNull() && DynamicCast<VolumeMesh>(dataObject).IsNull())) {
+            (DynamicCast<UnstructuredMesh>(dataObject).IsNull() && DynamicCast<VolumeMesh>(dataObject).IsNull() && DynamicCast<SurfaceMesh>(dataObject).IsNull())) {
             showDarkFramelessMessage(
                     QStringLiteral("检测重叠单元"),
-                    QStringLiteral("请先在模型树中选择包含线性体单元的非结构网格、体网格或三维结构网格。"));
+                    QStringLiteral("请选择三角形或平面凸四边形表面网格，或包含线性体单元的网格。"));
             return;
         }
 
         auto* dialog = new igQtFilterDialogDockWidget(this, true);
         dialog->setFilterTitle(QStringLiteral("检测重叠单元"));
         dialog->setFilterDescription(QStringLiteral(
-                "检测当前输入网格内部具有真实共同体积的单元。支持线性四面体、六面体、三棱柱和金字塔单元。<br>"
+                "检测三角形、平面凸四边形的内部相交，或四面体、六面体、三棱柱、金字塔的共同体积。<br>"
                 "执行后生成单元标量 <b>NumberOfOverlapsPerCell</b>；值大于 0 的单元以选中边线高亮显示。<br>"
-                "仅共享面、边或点的单元不会被视为重叠；点集、表面、高阶、多面体和复合数据会给出安全提示。"));
+                "正常邻接不计为重叠；凹或扭曲四边形、高阶、多面体、复合数据及二维/三维混合网格暂不支持。"));
         const int toleranceId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
                                                      QStringLiteral("公差 (Tolerance)"), "0.0");
         dialog->show();
@@ -7138,19 +7138,19 @@ void igQtMainWindow::initAllFilters() {
         const auto sourceModelId = scene->GetCurrentModelID();
         const auto dataObject = model == nullptr ? nullptr : model->GetDataObject();
         if (model == nullptr || dataObject == nullptr ||
-            (DynamicCast<UnstructuredMesh>(dataObject).IsNull() && DynamicCast<VolumeMesh>(dataObject).IsNull())) {
+            (DynamicCast<UnstructuredMesh>(dataObject).IsNull() && DynamicCast<VolumeMesh>(dataObject).IsNull() && DynamicCast<SurfaceMesh>(dataObject).IsNull())) {
             showDarkFramelessMessage(
                     QStringLiteral("检测重叠单元"),
-                    QStringLiteral("请先在模型树中选择包含线性体单元的非结构网格、体网格或三维结构网格。"));
+                    QStringLiteral("请选择三角形或平面凸四边形表面网格，或包含线性体单元的网格。"));
             return;
         }
 
         auto* dialog = new igQtFilterDialogDockWidget(this, true);
         dialog->setFilterTitle(QStringLiteral("检测重叠单元"));
         dialog->setFilterDescription(QStringLiteral(
-                "检测当前输入网格内部具有真实共同体积的单元。支持线性四面体、六面体、三棱柱和金字塔单元。<br>"
+                "检测三角形、平面凸四边形的内部相交，或四面体、六面体、三棱柱、金字塔的共同体积。<br>"
                 "执行后生成单元标量 <b>NumberOfOverlapsPerCell</b>；值大于 0 的单元以选中边线高亮显示。<br>"
-                "仅共享面、边或点的单元不会被视为重叠；点集、表面、高阶、多面体和复合数据会给出安全提示。"));
+                "正常邻接不计为重叠；凹或扭曲四边形、高阶、多面体、复合数据及二维/三维混合网格暂不支持。"));
         const int toleranceId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
                                                      QStringLiteral("公差 (Tolerance)"), "0.0");
         dialog->show();
