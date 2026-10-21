@@ -4,8 +4,8 @@
 
 - 核心实现：`iGameCore/Filters/Histogram/iGameHistogramFilter.h/.cpp`
 - 结果容器：`iGameCore/Core/Common/iGameHistogramData.h`（`HistogramData`）
-- 图表控件：`Qt/include/IQWidgets/igQtHistogramChartWidget.h`、`Qt/src/IQWidgets/igQtHistogramChartWidget.cpp`（放在主窗口底部 Dock 里）
-- Qt 入口：菜单「算法处理 → 属性直方图 (Histogram)」
+- 图表控件：`Qt/include/IQWidgets/igQtHistogramChartWidget.h`、`Qt/src/IQWidgets/igQtHistogramChartWidget.cpp`（共享图表 Dock，默认停靠右侧）
+- Qt 入口：菜单「新增 filter / 第二批 → 属性直方图 (Histogram)」
 
 ## 1. 功能与输出
 
@@ -56,30 +56,35 @@ data->GetBinAccumulation();  // ArrayObject::Pointer，累计列（可为空）
 data->GetAverageColumns();   // std::vector<std::pair<total, average>>
 ```
 
-Qt 侧：加载模型 → 菜单「算法处理 → 属性直方图 (Histogram)」→ 面板选择数组、填写分箱数/分量、按需勾选居中分箱、自定义范围（含范围下限/上限）、归一化、计算均值 → 点击应用 → **主窗口底部出现柱状图 Dock**（`dockWidget_Histogram`，可停靠/移动/浮动/关闭）：横轴为 bin 中心（`bin_extents`），纵轴为频次（`bin_values`；归一化时是频率，标签为 `%g`），柱高即计数，标题给出「数组名 / bin 数 / 参与统计的值数 / 取值范围 / 是否归一化」；箱数 ≤ 30 时显示每个 bin 的中心标签，超过则不显示以免压叠。
+Qt 侧：加载模型 → 菜单「新增 filter / 第二批 → 属性直方图 (Histogram)」。分箱数等选项显示在主窗口最左侧「直方图参数」工具 Tab，与模型信息在同一列。应用后切换到左侧「直方图系列」Tab，右侧只包含填满可用空间的共享图表，3D 模型继续显示在中间。
 
-柱状图与原模型在**同一个窗口内**同时可见。再次应用时复用同一个 Dock 原地刷新（先清掉上一次的系列与坐标轴），并重设标题为当前模型名。
+主窗口最左侧「直方图系列」Tab 的「数据源」包含原模型和 `Histogram1 — 模型名` 等结果，每个数据源独立保存显示设置：
 
-同时还会在 **3D 视图右上角叠加一张紫色的柱状图**（`igQtHistogramChartWidget(rendererWidget, true)`）。注意这张图画的是 **数组数值本身**，不是频次：
+- `Attribute Type`：原模型可切换 Point Data / Cell Data；Histogram 结果是表列，不需要选择网格关联；
+- `Use Index for X Axis` / `X Array Name`：原模型默认用索引，Histogram 默认用 `bin_extents`；关闭索引模式后，可选择当前数据源的一列作为横轴；
+- `Series Parameters`：每行可勾选显示，双击色块改颜色，编辑 `Legend Name` 改图例。矢量展开为 `_Magnitude` 和 `_X/_Y/_Z` 等分量，原模型点坐标也提供 `Points_*` 系列；
+- Histogram 输出可选择 `bin_values`、`bin_extents`、可用的累计列及「计算均值」产生的 total / average 列；
+- 切换数据源只切换正在编辑的设置，已勾选的系列继续显示在**同一张图和同一对数值坐标轴**上。默认只显示结果的红色 `bin_values`，原模型的系列默认不勾选；
+- 同一个参数面板再次应用时替换其结果，保留仍存在的系列的显隐、颜色、图例及横轴选择；重新打开过滤器并应用会新增 `HistogramN` 数据源。
 
-- ParaView 侧实测：在 Chart View 里显示**模型**时，图表用 `UseIndexForXAxis = 1`（横坐标 = 索引），纵轴就是所选数组，系列颜色按 ColorBrewer Set1 依次分配 —— `SeriesColor = [Points_Magnitude 黑, Points_X #E41A1C, Points_Y #377EB8, Points_Z #4DAF4A, v (0.60,0.31,0.64) 紫]`。所以文件里第一条点数组（如 `v`）在 ParaView 里就是**紫色**的，柱子高度 = `v` 的数值（例如数据 `v = 0…19` 时看到 (0,0)(1,1)…(19,19) 那一列柱子）；
-- 本实现的叠加层即为该图：`DrawArrayValues(数组, 分量, 标题)`，纵轴标题 = 数组名（对应「纵坐标是 v」），横轴 = 索引，柱色 `#984EA3`（`kOverlayBarColor`）；分量等于维数时按模长；元素数 > 1000 时退化为同色折线以免 Qt Charts 卡顿；
-- 叠加层是 `rendererWidget`（`igQtRenderWidget : QOpenGLWidget`）的子控件，画在模型之上；右上角对齐的 `QVBoxLayout`（边距 12 px）定位，窗口缩放自动跟随；尺寸固定 320×200；
-- 半透明底色 `rgba(18,18,18,190)`、图区 `rgba(0,0,0,120)`，模型可透出；右上角 ✕ 可单独关闭，再次点「应用」重新显示；
-- 底部 Dock 那张图仍是**频次直方图**（`bin_extents` × `bin_values`），柱色改为 ParaView 里 `bin_values` 系列的红色 `#E41A1C`（`kDockBarColor`），归一化时纵轴变频率。
+**统计直方图与原数组值的含义不同**：`bin_extents × bin_values` 表示分布，`索引 × PointValue` 表示原始数组值。它们可以在同一图表比较，但各自仍使用自己的横轴定义，图表显示共同的数值范围。
+
+绘图区交互：**滚轮向上放大、向下缩小**，缩放中心跟随鼠标；**按住左键或中键拖动平移**；**左键双击恢复当前系列的完整显示范围**。坐标刻度随显示范围更新，图例固定在右上角。缩放和平移作用于坐标范围，统计参数仍由左侧面板控制。重新应用过滤器或修改显示系列后，图表重新计算完整范围。
+
+不再创建 3D 视图右上角的独立紫色小图。Histogram 结果在图表的「数据源」列表中选择，尚未作为可渲染模型加入 3D 场景/模型树。原模型在模型树被选中时，会同步选中图表中对应的数据源。
+
+所有系列始终显示为从零基线出发的柱形，正值向上、负值向下，不再因数据量超过 1000 项而改成折线。密集数据按屏幕像素保留正、负极值绘制，放大后按实际柱宽绘制，避免大量图表顶点造成卡顿。非有限的图表坐标会跳过，这不改变核心直方图的统计结果。系列数量和跳过值数量可通过绘图区悬停提示查看，不再占用底部说明区域。
 
 ## 使用示例
 
 ### 1. GUI（iGameVis）
 
-1. 打开模型（例如 `Examples/Models/Convert_Quad_Bicycle.vtk`）；
-2. 菜单 **Filters** 下点 **属性直方图 (Histogram)**；
-3. 面板 7 个参数：数组（**默认 = 当前显示的数组**）、分量、分箱数、居中分箱、自定义区间、归一化、累加；
-4. 点「确定」后：
-   - 模型树新增 `*_histogram` 输出，右下角 Dock 直接给出**柱状图**；
-   - 3D 窗口**右上角同时叠加一张紫色 `#984EA3` 柱状图**（横轴 = 当前数组取值、纵轴 = 频数），对应 ParaView 运行
-     Histogram 后在模型上出现的那张图；切换面板里的数组，叠加图的纵轴标题随之改变（默认跟随当前显示数组，
-     与 ParaView 的 `SelectInputArray` 行为一致）。
+1. 打开 `Examples/Models/ExtractLocationConnectedSteppedSolid.vtk`；
+2. 打开「属性直方图 (Histogram)」，选择点属性 `PointValue`、10 bins、分量 0，应用；
+3. 最左侧「直方图系列」Tab 的数据源选择 `Histogram1`，默认显示 `bin_values`：10 箱，每箱计数 8，横轴为 bin 中心；
+4. 数据源切换到原模型，在 Series Parameters 勾选 `PointValue` 和 `PointVector_Magnitude`；
+5. 同一图中同时显示原模型系列和 Histogram 系列。切回 Histogram 数据源取消 `bin_values`，只隐藏该系列；
+6. 原模型切换到 Cell Data 后可选择 `RegionId`、`CellValue`、`CellVector_*`；切回 Point Data 保留此前勾选。
 
 ### 2. 核心库（C++）
 
@@ -224,8 +229,7 @@ auto histogram = iGame::DynamicCast<iGame::HistogramData>(filter->GetOutput(0));
 1. **VTK 的 `CalculateAverages` 在 bin 0 为空时会输出未初始化内存（本实现不复现）**
    `vtkExtractHistogram.cxx:798` 用 `numComps = iter.second.TotalValues[0].size()` 推断列的分量数；当第一个 bin 没有任何元组时 `TotalValues[0]` 为空，`numComps` 变成 0，随后的 `SetValue(i*numComps+j, ...)` 只写第 0 个位置，其余分量留成未初始化内存。实测 W11（第一个 bin 为空）ParaView 输出 `1.18e-311` 之类的非规格化数，而本实现按**源数组的实际维数**展开，结果是确定且正确的。bin_extents / bin_values 不受影响，仍然逐元素相同。
 2. **输出容器**：VTK 输出 `vtkTable`（行 = bin）；iGameVis 没有表类型，用 `HistogramData`（`DataObject`）承载同名的各列，再由 `igQtHistogramChartWidget` 画成柱状图显示。该对象只作为结果容器，不加入场景/模型树。
-3. **呈现方式**：本实现把结果画成柱状图，既能停靠在主窗口底部（`igQtHistogramChartWidget` + `QDockWidget`），也会在 3D 视图右上角叠加一张紫图（`overlay = true`），对应 ParaView 用 Chart View / 叠加面板显示 `bin_extents`（X）与 `bin_values`（系列）。ParaView 默认的 Spreadsheet 表格视图未实现（ParaView 的 SpreadsheetView 只能由 GUI 创建，`pvpython` 里也不可用）。
-   实测补充：ParaView 6.2 的 Render View 本身**没有图表叠加层属性**（`ListProperties()` 里无任何 overlay/chart 项），且 `Show(histogram, renderView)` 在无界面模式下报 “Could not create a representation object for proxy Histogram”，即那张紫图来自 ParaView 自动创建的 Chart View 面板。同一个 Chart View 里会同时出现两条来源的系列：**模型的数组**（横坐标取索引，`v` 为紫色）与**直方图表格**（横坐标取 `bin_extents`，`bin_values` 为红色 `#E41A1C`）；本实现分别对应 3D 视图上的叠加层与底部 Dock。
+3. **呈现方式**：一个共享图表 Dock 承载原模型与 Histogram 结果，分别配置系列、横轴并共同显示。结果通过图表的「数据源」列表选择，而非 ParaView 的 Pipeline Browser。尚未实现通用 Spreadsheet View、左右双纵轴和通用图表表示类型。
 4. **范围内无可用值**：VTK 走失败分支、不产生输出表（只在调试输出里提示），本实现返回 `false` 并在 Qt 面板给出中文提示「所选数组没有可统计的值（可能所有元组都被 blanked，或取值全为非有限值）。」，这也是用户最初报错的定位依据。
 5. **`Accumulation`**：VTK 有该选项、ParaView 面板没有暴露；本实现在核心 API 提供并在文档中标注，Qt 面板不显示。
 
@@ -279,4 +283,44 @@ build-msvc\Release\_tmpHistFull.exe --file <模型> --array <名|POINTS:名|CELL
     [--center] [--range min max] [--normalize] [--accum] [--averages]
 pvpython _pv_hist_opts.py        # 生成 VTK 参考 CSV（每个选项一个用例）
 pvpython _cmp_hist_wide.py <pv.csv> <igv.csv> <用例名>   # 按列名（忽略大小写）逐元素比对
+```
+
+## 10. 共享图表回归检查
+
+历史问题：原模型数组与统计结果被硬编码到两张图中，缺少 Series Parameters，无法在同一个数值坐标系中选择和比较系列。
+
+开启 `IGAME_BUILD_FILTER_CHECKS` 和 `ENABLE_QT_MODULE` 后可构建 `testHistogramChartChecks`。在仓库根目录执行该程序，检查共享坐标轴、系列勾选、图例编辑、点/单元切换、原数组横轴、重复应用、均值列、归一化与非有限图表值。传入 `--preview` 会在检查后保留预览窗口，便于目视验证。
+
+2026-10-16 布局调整验证：`Qt_module` 和桌面程序构建通过；
+`testHistogramChartChecks.exe -platform offscreen` 25/25 通过，包括实际主窗口菜单到左侧工具 Tab 的路由、参数窗口关闭后的内容归还、系列 Tab 重新打开，以及右侧绘图区占满容器。此检查不包含实际 OpenGL 绘制。
+当前旧程序仍运行时，另生成 `build-msvc/Release/iGameVis-histogram-layout.exe` 用于检查新版布局，未替换正在使用的 `iGameVis.exe`。
+
+绘图外观按 ParaView 参考图调整：白底、Arial 小字号、浅灰网格、细轴线和细边柱形，去掉绘图区大标题和默认轴标题。图例以白底黑色细框覆盖在绘图区右上角，不占用独立侧栏；自动刻度使用便于阅读的 1/2/5 间隔。左侧参数和系列设置位置不变。
+`testHistogramChartChecks.exe --render-preview -platform offscreen` 会在检查后导出全部系列、三个矢量系列的实际 Qt 渲染图到 `build-msvc/histogram-style-*.png`，供目视对照参考图。矢量预览图使用固定显示范围，便于与用户提供的局部图比较；程序中仍默认按当前可见数据自动确定范围。
+外观调整版已构建为 `build-msvc/Release/iGameVis-histogram-style.exe`；25/25 检查通过，两张渲染图已目视检查。
+
+## 11. 大模型有符号柱形修复
+
+问题：自行车有 82,212 个点，原界面将超过 1000 项的系列自动切换成折线。选择 `Points_X` 或 `Points_Y` 后曲线只连接相邻值，无法呈现 ParaView 中从零基线向上下延伸的柱形。
+
+修复：始终保留柱形表示，密集区域按设备像素独立保留正、负极值；跨越零的坐标范围绘制清晰的水平零基线。系列颜色在加入图表后重新设置，避免 Qt 自动主题把黑色系列替换成默认蓝色。
+
+验证：新增 2048 项正负数据的实际像素检查，验证两侧柱形填充、空白区域及贯穿绘图区的零基线；`testHistogramChartChecks` 30/30 通过。执行 `--render-bicycle -platform offscreen` 导出 `build-msvc/histogram-bicycle-Points_X.png` 和 `histogram-bicycle-Points_Y.png`，已目视检查。使用本机 ParaView 的 `pvpython` 读取同一文件确认 82,212 个点及坐标范围：X [-1, 1]、Y 约 [-0.339073, 0.339073]、Z 约 [-0.628308, 0.628308]。截图比较须统一坐标分量和显示范围。
+
+新版可执行文件：`build-msvc/Release/iGameVis-histogram-bars.exe`。
+
+## 12. 原工作区整合构建（2026-10-16）
+
+已将交互工作树的滚轮缩放、左键/中键平移、双击复位及极限缩放刻度修复合入原工作区，同时保留大模型正负柱形、零基线、配色及左侧参数/系列面板布局。
+
+在 `D:/iGame/igamevis` 使用原 CMake 构建目录构建 `Qt_module`、`iGameVis`、`testHistogramChartChecks`、`testHistogramChecks`，全部成功。正式整合程序为 `D:/iGame/igamevis/build-msvc/Release/iGameVis.exe`。
+
+验证：图表及交互检查 38/38、核心直方图检查 44/44 通过；`--render-bicycle -platform offscreen` 对 82,212 点自行车的 `Points_X` / `Points_Y` 绘图成功，两张导出图已目视确认正负填充和零基线。正式程序启动后持续存活 5 秒，冒烟检查后关闭。该启动检查不替代完整的 OpenGL 与 GUI 人工交互回归。
+
+2026-10-22 提交前重新运行：图表及交互检查 38/38、核心直方图检查 44/44 通过。
+本次改动与 `TestHistogramChartChecks.cpp` 首次加入同次提交，提交主题为
+`fix: unify histogram charts and preserve signed bars`。可用以下命令查询实际提交号：
+
+```powershell
+git log --diff-filter=A --format="%h %s" -- Examples/Filter/Histogram/TestHistogramChartChecks.cpp
 ```

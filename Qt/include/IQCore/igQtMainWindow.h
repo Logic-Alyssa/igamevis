@@ -21,6 +21,7 @@
 #include <QShowEvent>
 #include <QRect>
 #include <QTimer>
+#include <QPointer>
 #include <array>
 #include "AxisAlignedReflection/iGameAxisAlignedReflectionFilter.h"
 #include "MyFilter/iGameExtractCellsByTypeFilter.h"
@@ -85,6 +86,8 @@ public:
         DataChange,
         MedianFilter,
         ResampleToImage,
+        HistogramParameters,
+        HistogramSeries,
         Count
     };
 
@@ -206,11 +209,13 @@ private:
     // 改勾选重提取时，原地更新该新模型（模型树不新增节点）
     QDockWidget* m_extractCellsByTypeShell = nullptr;
     igQtExtractCellsByTypeWidget* m_extractCellsByTypeWidget = nullptr;
-    // 直方图结果：主窗口底部的柱状图 Dock（与原模型同窗口显示，反复应用时原地刷新）
+    // Shared chart view: source arrays and histogram outputs have independent series settings.
     QDockWidget* m_histogramDock = nullptr;
     igQtHistogramChartWidget* m_histogramChartWidget = nullptr;
-    // 叠加在 3D 视图上的那张直方图（对应 ParaView 运行 Histogram 后模型视图上出现的紫色直方图）
-    igQtHistogramChartWidget* m_histogramOverlayWidget = nullptr;
+    QPointer<igQtFilterDialogDockWidget> m_histogramParametersDock;
+    QWidget* m_histogramParameterContents = nullptr;
+    QDockWidget* m_histogramSeriesDock = nullptr;
+    void closeHistogramParameters();
     iGame::ExtractCellsByTypeFilter::Pointer m_extractCellsByTypeFilter;
     iGame::Model::Pointer m_extractCellsByTypeModel;
     // 提取分量：独立置顶弹窗（首次打开时懒创建），不占用左侧工具面板；
@@ -230,7 +235,7 @@ private:
     igQtResampleToImageWidget* m_resampleToImageWidget = nullptr;
     // 每类左侧工具面板占一个槽位，初始均未打开。
     std::array<int, static_cast<size_t>(LeftToolPanelId::Count)> m_leftToolTabByPanel{
-        {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}};
+        {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}};
 
     void relocateContentToLeftTab(QDockWidget* shell, QWidget* inner, const QString& title, LeftToolPanelId id,
                                   bool centerFlowField);

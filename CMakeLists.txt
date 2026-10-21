@@ -282,6 +282,9 @@ if (IGAME_BUILD_FILTER_CHECKS)
     target_link_libraries(testCGNSResample PRIVATE iGameCore)
 
     if (ENABLE_QT_MODULE)
+        add_executable(testHistogramChartChecks Examples/Filter/Histogram/TestHistogramChartChecks.cpp)
+        target_link_libraries(testHistogramChartChecks PRIVATE Qt_module)
+
         add_executable(testResampleUI Examples/Filter/Convert/TestResampleUI.cpp)
         target_link_libraries(testResampleUI PRIVATE Qt_module)
     endif ()

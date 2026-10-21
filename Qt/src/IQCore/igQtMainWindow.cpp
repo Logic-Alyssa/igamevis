@@ -6962,7 +6962,18 @@ void igQtMainWindow::initAllFilters() {
                     return;
                 }
 
-                igQtFilterDialogDockWidget* dialog = new igQtFilterDialogDockWidget(this, true);
+                closeHistogramParameters();
+                auto* dialog = new igQtFilterDialogDockWidget(this);
+                m_histogramParametersDock = dialog;
+                m_histogramParameterContents = dialog->widget();
+                dialog->setObjectName(QStringLiteral("HistogramParametersDock"));
+                dialog->setAllowedAreas(Qt::LeftDockWidgetArea);
+                dialog->setFloating(false);
+                dialog->setFeatures(QDockWidget::DockWidgetClosable);
+                // Restore the content to its shell before deleting the parameter dialog.
+                auto* closeButton = dialog->findChild<QPushButton*>(QStringLiteral("closeButton"));
+                disconnect(closeButton, &QPushButton::clicked, dialog, &igQtFilterDialogDockWidget::close);
+                connect(closeButton, &QPushButton::clicked, this, &igQtMainWindow::closeHistogramParameters);
                 dialog->setFilterTitle(QStringLiteral("属性直方图 (Histogram)"));
                 dialog->setFilterDescription(
                         QStringLiteral("统计所选属性数组的取值分布；参数与 ParaView 的 Histogram 过滤器一一对应"));
@@ -7009,9 +7020,10 @@ void igQtMainWindow::initAllFilters() {
                                                        QStringLiteral("归一化"), "false");
                 int averagesId = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX,
                                                       QStringLiteral("计算均值"), "false");
-                dialog->show();
+                openLeftToolPanel(LeftToolPanelId::HistogramParameters);
+                resizeDocks({m_leftFieldDock}, {420}, Qt::Horizontal);
 
-                dialog->setApplyFunctor([=, this]() {
+                dialog->setApplyFunctor([=, this, previousHistogram = HistogramData::Pointer{}]() mutable {
                     bool okArray = false;
                     int arrayIdx = dialog->getComboIndex(arrayId, okArray);
                     bool okBins = false;
@@ -7062,71 +7074,38 @@ void igQtMainWindow::initAllFilters() {
                         return;
                     }
                     auto histogram = filter->GetHistogramData();
-                    const QString chartTitle =
-                            QStringLiteral("%1属性 \"%2\" 的取值分布：%3 个 bin，统计 %4 个值，范围 [%5, %6]%7")
-                                    .arg(histogram->GetSourceAttachmentType() == IG_POINT ? QStringLiteral("点")
-                                                                                         : QStringLiteral("单元"))
-                                    .arg(QString::fromStdString(histogram->GetSourceArrayName()))
-                                    .arg(histogram->GetNumberOfBins())
-                                    .arg(static_cast<long long>(histogram->GetNumberOfCountedValues()))
-                                    .arg(histogram->GetBinMinimum(), 0, 'g', 6)
-                                    .arg(histogram->GetBinMaximum(), 0, 'g', 6)
-                                    .arg(histogram->GetNormalized() ? QStringLiteral("（已归一化）") : QString());
-                    // 柱状图放在主窗口底部 Dock 里：和原模型在同一个窗口内同时可见（对应 ParaView 运行 Histogram
-                    // 后在视图布局里多出一个图表视图），反复应用时原地刷新而不是弹新窗口
+                    // Input and Histogram outputs share one chart with independent representations.
                     if (m_histogramDock == nullptr) {
                         m_histogramChartWidget = new igQtHistogramChartWidget(this);
                         m_histogramDock = new QDockWidget(this);
                         m_histogramDock->setObjectName(QStringLiteral("dockWidget_Histogram"));
                         m_histogramDock->setWidget(m_histogramChartWidget);
-                        m_histogramDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea |
-                                                          Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+                        m_histogramDock->setAllowedAreas(Qt::RightDockWidgetArea);
                         m_histogramDock->setFeatures(QDockWidget::DockWidgetClosable |
                                                      QDockWidget::DockWidgetMovable |
                                                      QDockWidget::DockWidgetFloatable);
-                        this->addDockWidget(Qt::BottomDockWidgetArea, m_histogramDock);
-                        resizeDocks({m_histogramDock}, {320}, Qt::Vertical);
+                        this->addDockWidget(Qt::RightDockWidgetArea, m_histogramDock);
+                        resizeDocks({m_histogramDock}, {640}, Qt::Horizontal);
+                        m_histogramSeriesDock = new QDockWidget(QStringLiteral("直方图系列"), this);
+                        m_histogramSeriesDock->setObjectName(QStringLiteral("dockWidget_HistogramSeries"));
+                        m_histogramSeriesDock->setAllowedAreas(Qt::LeftDockWidgetArea);
+                        m_histogramSeriesDock->setFeatures(QDockWidget::DockWidgetClosable);
+                        m_histogramSeriesDock->setWidget(m_histogramChartWidget->settingsWidget());
+                        connect(modelTreeWidget, &igQtModelDialogWidget::CurrendModelChanged,
+                                m_histogramChartWidget, [this]() {
+                                    auto model = rendererWidget->GetScene()->GetCurrentModel();
+                                    if (model) m_histogramChartWidget->SelectSource(model->GetDataObject().get());
+                                });
                     }
                     m_histogramDock->setWindowTitle(
                             QStringLiteral("属性直方图 — %1").arg(QString::fromStdString(obj->GetName())));
-                    m_histogramChartWidget->DrawHistogram(histogram->GetBinExtents(),
-                                                          histogram->GetBinValues(), chartTitle,
-                                                          histogram->GetNormalized());
+                    m_histogramChartWidget->SetHistogram(obj, histogram, arrIndexes[arrayIdx], component,
+                                                         previousHistogram.get());
+                    previousHistogram = histogram;
                     if (m_histogramDock->isHidden()) { m_histogramDock->show(); }
                     m_histogramDock->raise();
-
-                    // 与 ParaView 一样，再在 3D 视图上叠加一张直方图：rendererWidget 是 QOpenGLWidget，
-                    // 子控件会画在模型之上；用一层右上角对齐的布局定位，窗口缩放时自动跟随。
-                    // 关掉叠加层（点右上角 ✕）后再次应用会重新显示。
-                    if (m_histogramOverlayWidget == nullptr) {
-                        m_histogramOverlayWidget = new igQtHistogramChartWidget(rendererWidget, true);
-                        m_histogramOverlayWidget->setFixedSize(320, 200);
-                        m_histogramOverlayWidget->setToolTip(
-                                QStringLiteral("属性直方图叠加层（点右上角 ✕ 关闭）"));
-                        if (rendererWidget->layout() == nullptr) {
-                            auto* overlayLayout = new QVBoxLayout(rendererWidget);
-                            overlayLayout->setContentsMargins(12, 12, 12, 12);
-                            overlayLayout->setAlignment(Qt::AlignTop | Qt::AlignRight);
-                            overlayLayout->addWidget(m_histogramOverlayWidget);
-                        } else {
-                            m_histogramOverlayWidget->setParent(rendererWidget);
-                            m_histogramOverlayWidget->move(12, 12);
-                        }
-                        m_histogramOverlayWidget->hide();
-                    }
-                    // 叠加层画的是 ParaView 图表视图里那张「数组数值 vs 索引」的柱状图（纵轴 = 数组名，
-                    // 第一条数据数组的系列色是 ColorBrewer Set1 的紫色），不是频次直方图
-                    auto& selectedAttribute = attributes->GetElement(arrIndexes[arrayIdx]);
-                    const QString overlayTitle =
-                            QStringLiteral("%1属性 \"%2\"：索引 — 数值")
-                                    .arg(selectedAttribute.attachmentType == IG_POINT ? QStringLiteral("点")
-                                                                                     : QStringLiteral("单元"))
-                                    .arg(QString::fromStdString(selectedAttribute.pointer->GetName()));
-                    m_histogramOverlayWidget->DrawArrayValues(selectedAttribute.pointer, component,
-                                                              overlayTitle);
-                    m_histogramOverlayWidget->show();
-                    m_histogramOverlayWidget->raise();
-                    dialog->close();
+                    openLeftToolPanel(LeftToolPanelId::HistogramSeries);
+                    closeHistogramParameters();
                 });
             });
 
@@ -7921,6 +7900,15 @@ void igQtMainWindow::initAllDockWidgetConnectWithAction() {
     });
 }
 
+void igQtMainWindow::closeHistogramParameters() {
+    if (!m_histogramParametersDock) return;
+    closeLeftToolPanel(LeftToolPanelId::HistogramParameters);
+    auto* dialog = m_histogramParametersDock.data();
+    m_histogramParametersDock = nullptr;
+    m_histogramParameterContents = nullptr;
+    dialog->close();
+}
+
 QDockWidget* igQtMainWindow::shellDockForLeftPanel(LeftToolPanelId id) const {
     switch (id) {
     case LeftToolPanelId::Scalar: return ui->dockWidget_ScalarField;
@@ -7935,6 +7923,8 @@ QDockWidget* igQtMainWindow::shellDockForLeftPanel(LeftToolPanelId id) const {
     case LeftToolPanelId::DataChange: return ui->dockWidget_DataChangeField;
     case LeftToolPanelId::MedianFilter: return ui->dockWidget_MedianFilter;
     case LeftToolPanelId::ResampleToImage: return m_resampleToImageDock;
+    case LeftToolPanelId::HistogramParameters: return m_histogramParametersDock.data();
+    case LeftToolPanelId::HistogramSeries: return m_histogramSeriesDock;
     case LeftToolPanelId::Count: return nullptr;
     }
     return nullptr;
@@ -8044,6 +8034,17 @@ void igQtMainWindow::openLeftToolPanel(LeftToolPanelId id) {
         break;
     case LeftToolPanelId::ResampleToImage:
         relocateContentToLeftTab(m_resampleToImageDock, m_resampleToImageWidget, QStringLiteral("重采样到图像"), id, false);
+        break;
+    case LeftToolPanelId::HistogramParameters:
+        relocateContentToLeftTab(m_histogramParametersDock.data(), m_histogramParameterContents,
+                                 QStringLiteral("直方图参数"), id, false);
+        break;
+    case LeftToolPanelId::HistogramSeries:
+        if (m_histogramChartWidget) {
+            relocateContentToLeftTab(m_histogramSeriesDock, m_histogramChartWidget->settingsWidget(),
+                                     QStringLiteral("直方图系列"), id, false);
+            m_histogramChartWidget->settingsWidget()->show();
+        }
         break;
     case LeftToolPanelId::Count:
         break;
