@@ -9910,7 +9910,7 @@ void igQtMainWindow::initAllFilters() {
             if (m_leftFieldTabs->tabText(i) == QStringLiteral("点平面插值")) {
                 QWidget* oldPage = m_leftFieldTabs->widget(i);
                 m_leftFieldTabs->removeTab(i);
-                oldPage->deleteLater();
+                delete oldPage;
             }
         }
 
@@ -10078,7 +10078,7 @@ void igQtMainWindow::initAllFilters() {
         updateUIState();
 
         QLabel* tip = new QLabel(
-                QStringLiteral("提示：左键拖拽手柄平移/旋转，右键旋转视角。\n如被遮挡，可直接修改上方数值。"), body);
+                QStringLiteral("悬停高亮后左键拖动：中心点平移、平面沿法向移动、法向端点或圆环旋转。\n未命中组件时左键旋转模型；点击应用后执行插值。"), body);
         tip->setStyleSheet("color: #888888; font-size: 12px; margin-top: 10px;");
         mainLayout->addWidget(tip);
 
@@ -10105,6 +10105,19 @@ void igQtMainWindow::initAllFilters() {
         selection->PlanePoint = Vector3d(cx, cy, cz);
         selection->PlaneNormal = Vector3d(1.0, 0.0, 0.0);
 
+        auto interactor = scene->GetInteractor();
+        auto previousBox = interactor->GetSpecialInteractor("SelectBox");
+        auto previousTransform = interactor->GetSpecialInteractor("TransformBox");
+        const bool previousHaveBox = SelectionParameter::Instance().GetHaveBox();
+        const bool previousInSelection = SelectionParameter::Instance().GetInSelection();
+        for (auto previous : {previousBox, previousTransform})
+            if (auto box = DynamicCast<BoxStyle>(previous)) box->ClearDraw();
+        interactor->RemoveSepcialInteractor("SelectBox");
+        interactor->RemoveSepcialInteractor("TransformBox");
+        auto planeStyle = RegionPlaneStyle::New();
+        planeStyle->Initialize(interactor);
+        planeStyle->SetBounds(bbox);
+        planeStyle->SetPlane(Point(cx, cy, cz), Point(1., 0., 0.));
         // 7. 直接应用 按钮绑定
         connect(applyBtn, &QPushButton::clicked, page, [=]() mutable {
             status->setText(QStringLiteral("计算中..."));
@@ -10115,7 +10128,6 @@ void igQtMainWindow::initAllFilters() {
             Vector3d n(selection->PlaneNormal[0], selection->PlaneNormal[1], selection->PlaneNormal[2]);
             if (n.norm() > 1e-6) n = n.normalized();
             filter->SetNormal(Point(n[0], n[1], n[2]));
-
             filter->SetResolution(res->value());
             filter->SetKernelType(static_cast<PointPlaneInterpolatorFilter::KernelType>(kernel->currentIndex()));
             filter->SetKernelFootprint(
@@ -10175,73 +10187,65 @@ void igQtMainWindow::initAllFilters() {
             }
         });
 
-        // 8. UI 与 3D 双向绑定
+        // Reuse the region extractor's Plane widget without changing interpolation.
+        QPointer<QWidget> pageGuard(page);
         auto syncUIto3D = [=]() {
             Vector3d n(normalX->value(), normalY->value(), normalZ->value());
-            if (n.norm() > 1e-6) n = n.normalized();
-
+            if (n.norm() < 1.e-6) return;
+            n = n.normalized();
             selection->PlanePoint = Vector3d(originX->value(), originY->value(), originZ->value());
             selection->PlaneNormal = n;
-            selection->UpdatePlane();
+            planeStyle->SetPlane(Point(originX->value(), originY->value(), originZ->value()),
+                                 Point(n[0], n[1], n[2]));
             rendererWidget->update();
         };
+        planeStyle->SetChangedCallback([=]() {
+            if (!pageGuard) return;
+            const auto& p = planeStyle->GetOrigin();
+            const auto& n = planeStyle->GetNormal();
+            selection->PlanePoint = Vector3d(p[0], p[1], p[2]);
+            selection->PlaneNormal = Vector3d(n[0], n[1], n[2]);
+            QSignalBlocker b1(originX), b2(originY), b3(originZ);
+            QSignalBlocker b4(normalX), b5(normalY), b6(normalZ);
+            originX->setValue(p[0]); originY->setValue(p[1]); originZ->setValue(p[2]);
+            normalX->setValue(n[0]); normalY->setValue(n[1]); normalZ->setValue(n[2]);
+            rendererWidget->update();
+        });
+        for (auto* p : {originX, originY, originZ, normalX, normalY, normalZ})
+            connect(p, qOverload<double>(&QDoubleSpinBox::valueChanged), page, [=](double) { syncUIto3D(); });
 
-        QPointer<QWidget> pageGuard(page);
-        selection->SetSelectionCallBackEvent(
-                [=](IGenum type, const std::vector<igIndex>&, Selection::Operate) {
-                    if (type != IG_CHANGE || !pageGuard) return;
-
-                    QSignalBlocker b1(originX);
-                    originX->setValue(selection->PlanePoint[0]);
-                    QSignalBlocker b2(originY);
-                    originY->setValue(selection->PlanePoint[1]);
-                    QSignalBlocker b3(originZ);
-                    originZ->setValue(selection->PlanePoint[2]);
-                    QSignalBlocker b4(normalX);
-                    normalX->setValue(selection->PlaneNormal[0]);
-                    QSignalBlocker b5(normalY);
-                    normalY->setValue(selection->PlaneNormal[1]);
-                    QSignalBlocker b6(normalZ);
-                    normalZ->setValue(selection->PlaneNormal[2]);
-                },
-                std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
-
-        for (auto* p: {originX, originY, originZ, normalX, normalY, normalZ}) {
-            connect(p, qOverload<double>(&QDoubleSpinBox::valueChanged), page, [syncUIto3D](double) { syncUIto3D(); });
-        }
-
-        // 9. 交互器生命周期
         QPointer<igQtRenderWidget> renderGuard(rendererWidget);
         auto activate = [=]() {
             if (!renderGuard) return;
-            auto interactor = scene->GetInteractor();
-            interactor->SetDataObject(input);
-            interactor->SetPainter3D(model->GetPainter3D());
-            interactor->RequestSlicingStyle(selection);
+            interactor->RequestBasicStyle();
+            interactor->_SetSpecialInteractor("PointPlaneInterpolatorPlane", planeStyle);
+            SelectionParameter::Instance().SetHaveBox(false);
+            SelectionParameter::Instance().SetInSelection(false);
+            planeStyle->SetShow(true);
             renderGuard->update();
         };
-
         auto deactivate = [=]() {
+            planeStyle->SetChangedCallback({});
             if (!renderGuard) return;
-            selection->SetUpdateFunction([]() {});
-            scene->GetInteractor()->RequestBasicStyle();
-            // 强制重置交互风格
-            renderGuard->ChangeInteractorStyle(iGame::Interactor::BasicStyle);
+            planeStyle->SetShow(false);
+            interactor->RemoveSepcialInteractor("PointPlaneInterpolatorPlane");
+            if (previousBox) interactor->_SetSpecialInteractor("SelectBox", previousBox);
+            if (previousTransform) interactor->_SetSpecialInteractor("TransformBox", previousTransform);
+            SelectionParameter::Instance().SetHaveBox(previousHaveBox);
+            SelectionParameter::Instance().SetInSelection(previousInSelection);
+            for (auto previous : {previousBox, previousTransform})
+                if (auto box = DynamicCast<BoxStyle>(previous)) if (box->GetBox()) box->ToDraw();
             renderGuard->update();
         };
-
         // 10. 嵌入左侧工具面板
         const int idx = m_leftFieldTabs->addTab(page, QStringLiteral("点平面插值"));
         m_leftFieldDock->show();
         m_leftFieldDock->raise();
         m_leftFieldTabs->setCurrentIndex(idx);
 
-        // 11. 捕获页面销毁信号，并利用单次定时器，强制在下一帧刷新交互状态
+        // 11. 页面销毁时移除平面组件，并恢复之前的交互盒子。
         connect(page, &QObject::destroyed, this, [=]() {
             deactivate();
-            QTimer::singleShot(0, this, [this]() {
-                if (rendererWidget) { rendererWidget->ChangeInteractorStyle(iGame::Interactor::BasicStyle); }
-            });
         });
 
         // 12. 安全处理 Tab 关闭事件
