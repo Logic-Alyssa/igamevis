@@ -33,6 +33,9 @@ Examples/Models/cell_metric_hex.vtk -filter -diff -merge text
 Examples/Models/cell_metric_tet.vtk -filter -diff -merge text
 
 # Keep upstream's small plain-text example fixtures outside Git LFS.
+Examples/Models/ConnectedSurfacePropertiesOpenPatch.vtk -filter -diff -merge text
+Examples/Models/ConnectedSurfacePropertiesPolyhedra.vtk -filter -diff -merge text
+Examples/Models/ConnectedSurfacePropertiesTwoBoxes.vtk -filter -diff -merge text
 Examples/Models/ElevationSlopeTerrain.vtk -filter -diff -merge text
 Examples/Models/ElevationTerraces.vtk -filter -diff -merge text
 Examples/Models/ExtractEnclosedPoints_Points_Cloud1.vtk -filter -diff -merge text

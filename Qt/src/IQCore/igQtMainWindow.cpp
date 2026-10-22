@@ -9648,189 +9648,167 @@ void igQtMainWindow::initAllFilters() {
     // ===== 属性直方图 Histogram：按需求追加在“开发中filter/第二批”菜单末尾 =====
     // ===== 属性直方图 Histogram（数组选择 + 分箱数；核心算法见 iGameCore/Filters/Histogram）=====
     connect(developingFiltersBatch2->addAction(QStringLiteral("属性直方图 (Histogram)")), &QAction::triggered, this,
-        [&](bool checked) {
-            if (rendererWidget->GetScene()->GetCurrentModel() == nullptr) {
-                showDarkFramelessMessage(QStringLiteral("提示"), QStringLiteral("请先加载一个模型"));
-                return;
-            }
-            auto obj = rendererWidget->GetScene()->GetCurrentModel()->GetDataObject();
-            if (!obj) return;
-            auto attributeSet = obj->GetAttributeSet();
-            auto attributes = attributeSet ? attributeSet->GetAllAttributes() : nullptr;
-            if (!attributes || attributes->GetNumberOfElements() == 0) {
-                showDarkFramelessMessage(QStringLiteral("提示"),
-                    QStringLiteral("当前模型没有属性数据，无法统计取值分布"));
-                return;
-            }
+            [&](bool checked) {
+                if (rendererWidget->GetScene()->GetCurrentModel() == nullptr) {
+                    showDarkFramelessMessage(QStringLiteral("提示"), QStringLiteral("请先加载一个模型"));
+                    return;
+                }
+                auto obj = rendererWidget->GetScene()->GetCurrentModel()->GetDataObject();
+                if (!obj) return;
+                auto attributeSet = obj->GetAttributeSet();
+                auto attributes = attributeSet ? attributeSet->GetAllAttributes() : nullptr;
+                if (!attributes || attributes->GetNumberOfElements() == 0) {
+                    showDarkFramelessMessage(QStringLiteral("提示"),
+                                             QStringLiteral("当前模型没有属性数据，无法统计取值分布"));
+                    return;
+                }
 
-            igQtFilterDialogDockWidget* dialog = new igQtFilterDialogDockWidget(this, true);
-            dialog->setFilterTitle(QStringLiteral("属性直方图 (Histogram)"));
-            dialog->setFilterDescription(
-                QStringLiteral("统计所选属性数组的取值分布；参数与 ParaView 的 Histogram 过滤器一一对应"));
+                closeHistogramParameters();
+                auto* dialog = new igQtFilterDialogDockWidget(this);
+                m_histogramParametersDock = dialog;
+                m_histogramParameterContents = dialog->widget();
+                dialog->setObjectName(QStringLiteral("HistogramParametersDock"));
+                dialog->setAllowedAreas(Qt::LeftDockWidgetArea);
+                dialog->setFloating(false);
+                dialog->setFeatures(QDockWidget::DockWidgetClosable);
+                // Restore the content to its shell before deleting the parameter dialog.
+                auto* closeButton = dialog->findChild<QPushButton*>(QStringLiteral("closeButton"));
+                disconnect(closeButton, &QPushButton::clicked, dialog, &igQtFilterDialogDockWidget::close);
+                connect(closeButton, &QPushButton::clicked, this, &igQtMainWindow::closeHistogramParameters);
+                dialog->setFilterTitle(QStringLiteral("属性直方图 (Histogram)"));
+                dialog->setFilterDescription(
+                        QStringLiteral("统计所选属性数组的取值分布；参数与 ParaView 的 Histogram 过滤器一一对应"));
 
-            // 下拉框条目顺序与属性下标可能因空槽而错位，这里显式保存"条目序号 -> 属性下标"的映射
-            std::vector<QString> arrNames;
-            std::vector<int> arrIndexes;
-            for (igIndex a = 0; a < attributes->GetNumberOfElements(); ++a) {
-                auto& at = attributes->GetElement(a);
-                if (at.isDeleted || at.pointer == nullptr) continue;
-                arrNames.push_back(QStringLiteral("%1: %2")
-                    .arg(at.attachmentType == IG_POINT ? QStringLiteral("点")
-                        : QStringLiteral("单元"))
-                    .arg(QString::fromStdString(at.pointer->GetName())));
-                arrIndexes.push_back(static_cast<int>(a));
-            }
-            int arrayId = dialog->addParameter(igQtFilterDialogDockWidget::QT_COMBO_BOX,
-                QStringLiteral("数组选择"), arrNames);
-            // 与 ParaView 一致：面板默认选中「当前正在显示的数组」（DataObject::GetAttributeIndex()），
-            // 而不是属性集里的第一个数组。否则属性集首项是单元数组时（例如 c 在 v 前面），
-            // 默认统计/绘图的就是那个数组。
-            if (auto* arrayCombo = dynamic_cast<QComboBox*>(dialog->getWidget(arrayId)); arrayCombo != nullptr) {
-                const int currentAttribute = obj->GetAttributeIndex();
-                for (size_t row = 0; row < arrIndexes.size(); ++row) {
-                    if (arrIndexes[row] == currentAttribute) {
-                        arrayCombo->setCurrentIndex(static_cast<int>(row));
-                        break;
+                // 下拉框条目顺序与属性下标可能因空槽而错位，这里显式保存"条目序号 -> 属性下标"的映射
+                std::vector<QString> arrNames;
+                std::vector<int> arrIndexes;
+                for (igIndex a = 0; a < attributes->GetNumberOfElements(); ++a) {
+                    auto& at = attributes->GetElement(a);
+                    if (at.isDeleted || at.pointer == nullptr) continue;
+                    arrNames.push_back(QStringLiteral("%1: %2")
+                                               .arg(at.attachmentType == IG_POINT ? QStringLiteral("点")
+                                                                                  : QStringLiteral("单元"))
+                                               .arg(QString::fromStdString(at.pointer->GetName())));
+                    arrIndexes.push_back(static_cast<int>(a));
+                }
+                int arrayId = dialog->addParameter(igQtFilterDialogDockWidget::QT_COMBO_BOX,
+                                                   QStringLiteral("数组选择"), arrNames);
+                // 与 ParaView 一致：面板默认选中「当前正在显示的数组」（DataObject::GetAttributeIndex()），
+                // 而不是属性集里的第一个数组。否则属性集首项是单元数组时（例如 c 在 v 前面），
+                // 默认统计/绘图的就是那个数组。
+                if (auto* arrayCombo = dynamic_cast<QComboBox*>(dialog->getWidget(arrayId)); arrayCombo != nullptr) {
+                    const int currentAttribute = obj->GetAttributeIndex();
+                    for (size_t row = 0; row < arrIndexes.size(); ++row) {
+                        if (arrIndexes[row] == currentAttribute) {
+                            arrayCombo->setCurrentIndex(static_cast<int>(row));
+                            break;
+                        }
                     }
                 }
-            }
-            int binsId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
-                QStringLiteral("分箱数"), "10");
-            int componentId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
-                QStringLiteral("分量"), "0");
-            int centerId = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX,
-                QStringLiteral("居中分箱"), "false");
-            int useRangeId = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX,
-                QStringLiteral("自定义范围"), "false");
-            int rangeMinId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
-                QStringLiteral("范围下限"), "0");
-            int rangeMaxId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
-                QStringLiteral("范围上限"), "1");
-            int normalizeId = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX,
-                QStringLiteral("归一化"), "false");
-            int averagesId = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX,
-                QStringLiteral("计算均值"), "false");
-            dialog->show();
+                int binsId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
+                                                  QStringLiteral("分箱数"), "10");
+                int componentId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
+                                                       QStringLiteral("分量"), "0");
+                int centerId = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX,
+                                                    QStringLiteral("居中分箱"), "false");
+                int useRangeId = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX,
+                                                      QStringLiteral("自定义范围"), "false");
+                int rangeMinId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
+                                                      QStringLiteral("范围下限"), "0");
+                int rangeMaxId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT,
+                                                      QStringLiteral("范围上限"), "1");
+                int normalizeId = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX,
+                                                       QStringLiteral("归一化"), "false");
+                int averagesId = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX,
+                                                      QStringLiteral("计算均值"), "false");
+                openLeftToolPanel(LeftToolPanelId::HistogramParameters);
+                resizeDocks({m_leftFieldDock}, {420}, Qt::Horizontal);
 
-            dialog->setApplyFunctor([=, this]() {
-                bool okArray = false;
-                int arrayIdx = dialog->getComboIndex(arrayId, okArray);
-                bool okBins = false;
-                int bins = dialog->getInt(binsId, okBins);
-                bool okComponent = false;
-                int component = dialog->getInt(componentId, okComponent);
-                bool okCenter = false, okUseRange = false, okRangeMin = false, okRangeMax = false;
-                bool okNormalize = false, okAverages = false;
-                const bool center = dialog->getChecked(centerId, okCenter);
-                const bool useRange = dialog->getChecked(useRangeId, okUseRange);
-                const double rangeMin = dialog->getDouble(rangeMinId, okRangeMin);
-                const double rangeMax = dialog->getDouble(rangeMaxId, okRangeMax);
-                const bool normalize = dialog->getChecked(normalizeId, okNormalize);
-                const bool calculateAverages = dialog->getChecked(averagesId, okAverages);
-                if (!okArray || !okBins || arrayIdx < 0 || arrayIdx >= static_cast<int>(arrIndexes.size())) {
-                    showDarkFramelessMessage(QStringLiteral("提示"), QStringLiteral("请选择数组并填写分箱数"));
-                    return;
-                }
-                if (bins < 1 || bins > 10000) {
-                    showDarkFramelessMessage(QStringLiteral("提示"),
-                        QStringLiteral("分箱数请填 1 ~ 10000 之间的整数"));
-                    return;
-                }
-                if (!okComponent || component < 0) {
-                    showDarkFramelessMessage(QStringLiteral("提示"),
-                        QStringLiteral("分量请填不小于 0 的整数（等于数组维数时按模长统计）"));
-                    return;
-                }
-                if (useRange && (!okRangeMin || !okRangeMax)) {
-                    showDarkFramelessMessage(QStringLiteral("提示"),
-                        QStringLiteral("自定义范围请填写范围下限与范围上限"));
-                    return;
-                }
-                auto filter = HistogramFilter::New();
-                filter->SetInput(obj);
-                filter->SetAttributeIndex(arrIndexes[arrayIdx]);
-                filter->SetNumberOfBins(bins);
-                filter->SetComponent(component);
-                filter->SetCenterBinsAroundMinAndMax(center);
-                if (useRange) {
-                    filter->SetUseCustomBinRanges(true);
-                    filter->SetCustomBinRanges(rangeMin, rangeMax);
-                }
-                filter->SetNormalize(normalize);
-                filter->SetCalculateAverages(calculateAverages);
-                if (!filter->Execute()) {
-                    showDarkFramelessMessage(QStringLiteral("警告"), QString::fromStdString(filter->GetMessage()));
-                    return;
-                }
-                auto histogram = filter->GetHistogramData();
-                const QString chartTitle =
-                    QStringLiteral("%1属性 \"%2\" 的取值分布：%3 个 bin，统计 %4 个值，范围 [%5, %6]%7")
-                    .arg(histogram->GetSourceAttachmentType() == IG_POINT ? QStringLiteral("点")
-                        : QStringLiteral("单元"))
-                    .arg(QString::fromStdString(histogram->GetSourceArrayName()))
-                    .arg(histogram->GetNumberOfBins())
-                    .arg(static_cast<long long>(histogram->GetNumberOfCountedValues()))
-                    .arg(histogram->GetBinMinimum(), 0, 'g', 6)
-                    .arg(histogram->GetBinMaximum(), 0, 'g', 6)
-                    .arg(histogram->GetNormalized() ? QStringLiteral("（已归一化）") : QString());
-                // 柱状图放在主窗口底部 Dock 里：和原模型在同一个窗口内同时可见（对应 ParaView 运行 Histogram
-                // 后在视图布局里多出一个图表视图），反复应用时原地刷新而不是弹新窗口
-                if (m_histogramDock == nullptr) {
-                    m_histogramChartWidget = new igQtHistogramChartWidget(this);
-                    m_histogramDock = new QDockWidget(this);
-                    m_histogramDock->setObjectName(QStringLiteral("dockWidget_Histogram"));
-                    m_histogramDock->setWidget(m_histogramChartWidget);
-                    m_histogramDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea |
-                        Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-                    m_histogramDock->setFeatures(QDockWidget::DockWidgetClosable |
-                        QDockWidget::DockWidgetMovable |
-                        QDockWidget::DockWidgetFloatable);
-                    this->addDockWidget(Qt::BottomDockWidgetArea, m_histogramDock);
-                    resizeDocks({ m_histogramDock }, { 320 }, Qt::Vertical);
-                }
-                m_histogramDock->setWindowTitle(
-                    QStringLiteral("属性直方图 — %1").arg(QString::fromStdString(obj->GetName())));
-                m_histogramChartWidget->DrawHistogram(histogram->GetBinExtents(),
-                    histogram->GetBinValues(), chartTitle,
-                    histogram->GetNormalized());
-                if (m_histogramDock->isHidden()) { m_histogramDock->show(); }
-                m_histogramDock->raise();
-
-                // 与 ParaView 一样，再在 3D 视图上叠加一张直方图：rendererWidget 是 QOpenGLWidget，
-                // 子控件会画在模型之上；用一层右上角对齐的布局定位，窗口缩放时自动跟随。
-                // 关掉叠加层（点右上角 ✕）后再次应用会重新显示。
-                if (m_histogramOverlayWidget == nullptr) {
-                    m_histogramOverlayWidget = new igQtHistogramChartWidget(rendererWidget, true);
-                    m_histogramOverlayWidget->setFixedSize(320, 200);
-                    m_histogramOverlayWidget->setToolTip(
-                        QStringLiteral("属性直方图叠加层（点右上角 ✕ 关闭）"));
-                    if (rendererWidget->layout() == nullptr) {
-                        auto* overlayLayout = new QVBoxLayout(rendererWidget);
-                        overlayLayout->setContentsMargins(12, 12, 12, 12);
-                        overlayLayout->setAlignment(Qt::AlignTop | Qt::AlignRight);
-                        overlayLayout->addWidget(m_histogramOverlayWidget);
+                dialog->setApplyFunctor([=, this, previousHistogram = HistogramData::Pointer{}]() mutable {
+                    bool okArray = false;
+                    int arrayIdx = dialog->getComboIndex(arrayId, okArray);
+                    bool okBins = false;
+                    int bins = dialog->getInt(binsId, okBins);
+                    bool okComponent = false;
+                    int component = dialog->getInt(componentId, okComponent);
+                    bool okCenter = false, okUseRange = false, okRangeMin = false, okRangeMax = false;
+                    bool okNormalize = false, okAverages = false;
+                    const bool center = dialog->getChecked(centerId, okCenter);
+                    const bool useRange = dialog->getChecked(useRangeId, okUseRange);
+                    const double rangeMin = dialog->getDouble(rangeMinId, okRangeMin);
+                    const double rangeMax = dialog->getDouble(rangeMaxId, okRangeMax);
+                    const bool normalize = dialog->getChecked(normalizeId, okNormalize);
+                    const bool calculateAverages = dialog->getChecked(averagesId, okAverages);
+                    if (!okArray || !okBins || arrayIdx < 0 || arrayIdx >= static_cast<int>(arrIndexes.size())) {
+                        showDarkFramelessMessage(QStringLiteral("提示"), QStringLiteral("请选择数组并填写分箱数"));
+                        return;
                     }
-                    else {
-                        m_histogramOverlayWidget->setParent(rendererWidget);
-                        m_histogramOverlayWidget->move(12, 12);
+                    if (bins < 1 || bins > 10000) {
+                        showDarkFramelessMessage(QStringLiteral("提示"),
+                                                 QStringLiteral("分箱数请填 1 ~ 10000 之间的整数"));
+                        return;
                     }
-                    m_histogramOverlayWidget->hide();
-                }
-                // 叠加层画的是 ParaView 图表视图里那张「数组数值 vs 索引」的柱状图（纵轴 = 数组名，
-                // 第一条数据数组的系列色是 ColorBrewer Set1 的紫色），不是频次直方图
-                auto& selectedAttribute = attributes->GetElement(arrIndexes[arrayIdx]);
-                const QString overlayTitle =
-                    QStringLiteral("%1属性 \"%2\"：索引 — 数值")
-                    .arg(selectedAttribute.attachmentType == IG_POINT ? QStringLiteral("点")
-                        : QStringLiteral("单元"))
-                    .arg(QString::fromStdString(selectedAttribute.pointer->GetName()));
-                m_histogramOverlayWidget->DrawArrayValues(selectedAttribute.pointer, component,
-                    overlayTitle);
-                m_histogramOverlayWidget->show();
-                m_histogramOverlayWidget->raise();
-                dialog->close();
+                    if (!okComponent || component < 0) {
+                        showDarkFramelessMessage(QStringLiteral("提示"),
+                                                 QStringLiteral("分量请填不小于 0 的整数（等于数组维数时按模长统计）"));
+                        return;
+                    }
+                    if (useRange && (!okRangeMin || !okRangeMax)) {
+                        showDarkFramelessMessage(QStringLiteral("提示"),
+                                                 QStringLiteral("自定义范围请填写范围下限与范围上限"));
+                        return;
+                    }
+                    auto filter = HistogramFilter::New();
+                    filter->SetInput(obj);
+                    filter->SetAttributeIndex(arrIndexes[arrayIdx]);
+                    filter->SetNumberOfBins(bins);
+                    filter->SetComponent(component);
+                    filter->SetCenterBinsAroundMinAndMax(center);
+                    if (useRange) {
+                        filter->SetUseCustomBinRanges(true);
+                        filter->SetCustomBinRanges(rangeMin, rangeMax);
+                    }
+                    filter->SetNormalize(normalize);
+                    filter->SetCalculateAverages(calculateAverages);
+                    if (!filter->Execute()) {
+                        showDarkFramelessMessage(QStringLiteral("警告"), QString::fromStdString(filter->GetMessage()));
+                        return;
+                    }
+                    auto histogram = filter->GetHistogramData();
+                    // Input and Histogram outputs share one chart with independent representations.
+                    if (m_histogramDock == nullptr) {
+                        m_histogramChartWidget = new igQtHistogramChartWidget(this);
+                        m_histogramDock = new QDockWidget(this);
+                        m_histogramDock->setObjectName(QStringLiteral("dockWidget_Histogram"));
+                        m_histogramDock->setWidget(m_histogramChartWidget);
+                        m_histogramDock->setAllowedAreas(Qt::RightDockWidgetArea);
+                        m_histogramDock->setFeatures(QDockWidget::DockWidgetClosable |
+                                                     QDockWidget::DockWidgetMovable |
+                                                     QDockWidget::DockWidgetFloatable);
+                        this->addDockWidget(Qt::RightDockWidgetArea, m_histogramDock);
+                        resizeDocks({m_histogramDock}, {640}, Qt::Horizontal);
+                        m_histogramSeriesDock = new QDockWidget(QStringLiteral("直方图系列"), this);
+                        m_histogramSeriesDock->setObjectName(QStringLiteral("dockWidget_HistogramSeries"));
+                        m_histogramSeriesDock->setAllowedAreas(Qt::LeftDockWidgetArea);
+                        m_histogramSeriesDock->setFeatures(QDockWidget::DockWidgetClosable);
+                        m_histogramSeriesDock->setWidget(m_histogramChartWidget->settingsWidget());
+                        connect(modelTreeWidget, &igQtModelDialogWidget::CurrendModelChanged,
+                                m_histogramChartWidget, [this]() {
+                                    auto model = rendererWidget->GetScene()->GetCurrentModel();
+                                    if (model) m_histogramChartWidget->SelectSource(model->GetDataObject().get());
+                                });
+                    }
+                    m_histogramDock->setWindowTitle(
+                            QStringLiteral("属性直方图 — %1").arg(QString::fromStdString(obj->GetName())));
+                    m_histogramChartWidget->SetHistogram(obj, histogram, arrIndexes[arrayIdx], component,
+                                                         previousHistogram.get());
+                    previousHistogram = histogram;
+                    if (m_histogramDock->isHidden()) { m_histogramDock->show(); }
+                    m_histogramDock->raise();
+                    openLeftToolPanel(LeftToolPanelId::HistogramSeries);
+                    closeHistogramParameters();
                 });
-        });
+            });
 
     // ===== 追加弧长 AppendArcLength：按需求追加在“开发中filter/第二批”菜单末尾 =====
     QAction* appendArcLength = developingFiltersBatch2->addAction(QStringLiteral("追加弧长 (AppendArcLength)"));
@@ -11682,6 +11660,15 @@ void igQtMainWindow::initAllDockWidgetConnectWithAction() {
     });
 }
 
+void igQtMainWindow::closeHistogramParameters() {
+    if (!m_histogramParametersDock) return;
+    closeLeftToolPanel(LeftToolPanelId::HistogramParameters);
+    auto* dialog = m_histogramParametersDock.data();
+    m_histogramParametersDock = nullptr;
+    m_histogramParameterContents = nullptr;
+    dialog->close();
+}
+
 QDockWidget* igQtMainWindow::shellDockForLeftPanel(LeftToolPanelId id) const {
     switch (id) {
     case LeftToolPanelId::Scalar: return ui->dockWidget_ScalarField;
@@ -11697,6 +11684,8 @@ QDockWidget* igQtMainWindow::shellDockForLeftPanel(LeftToolPanelId id) const {
     case LeftToolPanelId::ExtractTimeSteps: return m_extractTimeStepsShell;
     case LeftToolPanelId::MedianFilter: return ui->dockWidget_MedianFilter;
     case LeftToolPanelId::ResampleToImage: return m_resampleToImageDock;
+    case LeftToolPanelId::HistogramParameters: return m_histogramParametersDock.data();
+    case LeftToolPanelId::HistogramSeries: return m_histogramSeriesDock;
     case LeftToolPanelId::Count: return nullptr;
     }
     return nullptr;
@@ -11810,6 +11799,17 @@ void igQtMainWindow::openLeftToolPanel(LeftToolPanelId id) {
         break;
     case LeftToolPanelId::ResampleToImage:
         relocateContentToLeftTab(m_resampleToImageDock, m_resampleToImageWidget, QStringLiteral("重采样到图像"), id, false);
+        break;
+    case LeftToolPanelId::HistogramParameters:
+        relocateContentToLeftTab(m_histogramParametersDock.data(), m_histogramParameterContents,
+                                 QStringLiteral("直方图参数"), id, false);
+        break;
+    case LeftToolPanelId::HistogramSeries:
+        if (m_histogramChartWidget) {
+            relocateContentToLeftTab(m_histogramSeriesDock, m_histogramChartWidget->settingsWidget(),
+                                     QStringLiteral("直方图系列"), id, false);
+            m_histogramChartWidget->settingsWidget()->show();
+        }
         break;
     case LeftToolPanelId::Count:
         break;
