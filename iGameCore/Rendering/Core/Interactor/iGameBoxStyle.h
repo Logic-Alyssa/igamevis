@@ -17,7 +17,10 @@ public:
     void MousePressEvent(IEvent event) override;
     void MouseMoveEvent(IEvent event) override;
     void MouseReleaseEvent(IEvent event) override;
+    void SetLeftButtonOnly(bool enabled) { m_LeftButtonOnly = enabled; }
+    void WheelEvent(IEvent event) override { if (!m_LeftButtonOnly) BasicStyle::WheelEvent(event); }
     bool IsInteractionActive() const override {
+        if (m_LeftButtonOnly) return m_SelectedItem != IG_NONE && m_MouseMode == MouseButton::LeftButton;
         return m_SelectedItem != IG_NONE &&
                (m_MouseMode == MouseButton::MiddleButton ||
                 (m_ParaViewInteraction && m_UniformScaling && m_MouseMode == MouseButton::RightButton) ||
@@ -105,6 +108,7 @@ protected:
     igm::vec2 m_PressSite = igm::vec2{0.0f};
     bool m_MeetedBox{};
     bool m_AllowRotation{true};
+    bool m_LeftButtonOnly{false};
     bool m_AllowLeftHandleDrag{false};
     bool m_CenterTranslationMode{false};
     bool m_AllowRegionResize{false};

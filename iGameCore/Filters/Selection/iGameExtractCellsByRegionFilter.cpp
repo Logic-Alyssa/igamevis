@@ -3,6 +3,7 @@
 #include <iGameCell.h>
 #include <iGamePoints.h>
 #include <iGameType.h>
+#include <cmath>
 IGAME_NAMESPACE_BEGIN
 
 ExtractCellsByRegionFilter::ExtractCellsByRegionFilter() {
@@ -30,7 +31,28 @@ void ExtractCellsByRegionFilter::SetRequireAllPoints(bool requireAllPoints) {
     m_RequireAllPoints = requireAllPoints;
 }
 
+void ExtractCellsByRegionFilter::SetOrientedBox(const Vector3d& center, const Vector3d& halfSize,
+                                               const std::array<Vector3d, 3>& axes) {
+    m_RegionType = ORIENTED_BOX;
+    m_Center = center;
+    m_HalfSize = halfSize;
+    m_BoxAxes = axes;
+}
+
+void ExtractCellsByRegionFilter::SetPlane(const Vector3d& origin, const Vector3d& normal) {
+    m_RegionType = PLANE;
+    m_Center = origin;
+    m_Normal = normal;
+}
+
 bool ExtractCellsByRegionFilter::IsPointInRegion(const Vector3d& p) const {
+    if (m_RegionType == PLANE) return (p - m_Center).dot(m_Normal) <= 0.;
+    if (m_RegionType == ORIENTED_BOX) {
+        const auto offset = p - m_Center;
+        for (int i = 0; i < 3; ++i)
+            if (std::abs(offset.dot(m_BoxAxes[i])) > m_HalfSize[i]) return false;
+        return true;
+    }
     if (m_RegionType == BOX) {
         return m_Box.isIn(p); // 含边界：min <= p <= max
     }
@@ -45,6 +67,18 @@ bool ExtractCellsByRegionFilter::Preview() {
     // 区域合法性校验（防止 BOX 忘赋值 → 静默 0 个 cell）
     if (m_RegionType == BOX && m_Box.isNull()) return false;
     if (m_RegionType == SPHERE && m_Radius <= 0) return false;
+    for (int i = 0; i < 3; ++i) {
+        if (m_RegionType != BOX && !std::isfinite(m_Center[i])) return false;
+        if (m_RegionType == PLANE && !std::isfinite(m_Normal[i])) return false;
+        if (m_RegionType == ORIENTED_BOX) {
+            if (!std::isfinite(m_HalfSize[i]) || m_HalfSize[i] <= 0.) return false;
+            for (int j = 0; j < 3; ++j) if (!std::isfinite(m_BoxAxes[i][j])) return false;
+            if (std::abs(m_BoxAxes[i].squaredNorm() - 1.) > 1.e-5) return false;
+            for (int j = 0; j < i; ++j) if (std::abs(m_BoxAxes[i].dot(m_BoxAxes[j])) > 1.e-5) return false;
+        }
+    }
+    if (m_RegionType == PLANE && (!std::isfinite(m_Normal.squaredNorm()) || m_Normal.squaredNorm() < 1.e-24)) return false;
+    if (m_RegionType == SPHERE && !std::isfinite(m_Radius)) return false;
 
     const IGsize cellNum = m_Mesh->GetNumberOfCells();
     for (IGsize cellId = 0; cellId < cellNum; cellId++) {

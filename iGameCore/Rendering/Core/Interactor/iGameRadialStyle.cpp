@@ -227,6 +227,7 @@ void RadialStyle::MousePressEvent(IEvent event) {
     m_UniformScaling = false;
     if (!m_Show) return;
 
+    if (m_LeftButtonOnly && event.button != MouseButton::LeftButton) return;
     if (!(m_ParaViewInteraction && m_AllowRegionResize && event.button == MouseButton::RightButton) &&
         event.button != MouseButton::MiddleButton &&
         !((m_AllowLeftHandleDrag || m_CenterTranslationMode || m_AllowRegionResize) &&
@@ -299,6 +300,7 @@ void RadialStyle::MousePressEvent(IEvent event) {
 void RadialStyle::MouseMoveEvent(IEvent event) {
     if (!m_Show) return;
     if (m_SelectedPoint == nullptr) {
+        if (m_LeftButtonOnly && m_MouseMode != MouseButton::NoButton) return;
         m_MVP = m_Interactor->GetMVP();
         const auto distance = [this, &event](const Point& point) {
             const igm::vec4 clip = m_MVP * igm::vec4(point[0], point[1], point[2], 1.f);

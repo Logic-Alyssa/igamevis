@@ -14,6 +14,8 @@ public:
     void MousePressEvent(IEvent event) override;
     void MouseMoveEvent(IEvent event) override;
     void MouseReleaseEvent(IEvent event) override;
+    void SetLeftButtonOnly(bool enabled) { m_LeftButtonOnly = enabled; }
+    void WheelEvent(IEvent event) override { if (!m_LeftButtonOnly) BasicStyle::WheelEvent(event); }
     bool IsInteractionActive() const override {
         return m_SelectedPoint != nullptr &&
                (m_MouseMode == MouseButton::MiddleButton ||
@@ -59,6 +61,7 @@ protected:
     ~RadialStyle() = default;
 
     bool m_Show{};
+    bool m_LeftButtonOnly{};
     bool m_MoveEndWithStart{};
     bool m_ShowSphere{};
     bool m_AllowLeftHandleDrag{};

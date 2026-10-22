@@ -407,6 +407,8 @@ void BoxStyle::MousePressEvent(IEvent event) {
     if (!SelectionParameter::Instance().GetHaveBox()) return;
     if (m_DynamicBox == nullptr) return;
 
+    if (m_LeftButtonOnly && event.button != MouseButton::LeftButton) return;
+    if (m_LeftButtonOnly) ChangeBoxDrawMode(event);
     m_UniformScaling = false;
     m_PressSite = event.pos;
     m_MousePressButton = event.button;
@@ -429,6 +431,12 @@ void BoxStyle::MousePressEvent(IEvent event) {
 }
 
 void BoxStyle::LeftButtonPress(IEvent event) {
+    if (m_LeftButtonOnly) {
+        // Reuse Transform's face rotation, edge translation and face handles.
+        MiddleButtonPress(event);
+        ClearDraw(); ToDraw();
+        return;
+    }
     if (m_CenterTranslationMode) {
         m_SelectedItem = IG_NONE;
         auto [rayStart, rayDir] = GetRayStartAndDir(event);
@@ -579,7 +587,7 @@ void BoxStyle::RightButtonPress(IEvent event) {
 }
 
 void BoxStyle::MouseMoveEvent(IEvent event) {
-    if (!m_AllowLeftHandleDrag && !m_CenterTranslationMode)
+    if (!m_LeftButtonOnly && !m_AllowLeftHandleDrag && !m_CenterTranslationMode)
         BasicStyle::MouseMoveEvent(event);
     if (!SelectionParameter::Instance().GetHaveBox()) return;
     if (m_DynamicBox == nullptr) return;
@@ -693,6 +701,7 @@ void BoxStyle::OperateBox(IEvent event) {
         return;
     }
     if (m_MouseMode != MouseButton::MiddleButton &&
+        !(m_LeftButtonOnly && m_MouseMode == MouseButton::LeftButton) &&
         !(m_AllowLeftHandleDrag && m_MouseMode == MouseButton::LeftButton &&
           m_SelectedItem == IG_POINT) &&
         !(m_CenterTranslationMode && m_MouseMode == MouseButton::LeftButton &&
@@ -877,7 +886,7 @@ void BoxStyle::ToDraw() {
     painter->SetPen(3);
     if (m_CenterTranslationMode) painter->SetPen(0, 125, 240);
     else painter->SetPen(Color::White);
-    if (m_BoxDrawMode == IG_EDGE) painter->SetPen(Color::Yellow);
+    if (m_BoxDrawMode == IG_EDGE || (m_LeftButtonOnly && m_BoxDrawMode == IG_CELL)) painter->SetPen(Color::Yellow);
     if (!m_CenterTranslationMode) {
         for (int i = 0; i < 6; i++) {
             int opeLineHandle = painter->DrawLine(m_DynamicBox->GetMidPoint(),
