@@ -58,11 +58,14 @@ class igQtPointSetToOctreeWidget;
 class igQtGlobalIdWidget;
 class igQtTriangleStripWidget;
 class igQtExtractCellsByTypeWidget;
+class igQtExtractTimeStepsWidget;
 class igQtAxisAlignedReflectionWidget;
 class igQtPointAndCellIdsWidget;
+class igQtSmoothWidget;
 class igQtExtractComponentWidget;
 class igQtLinearExtrusionWidget;
 class igQtMedianFilterWidget;
+class igQtTransformBoxController;
 class QDialog;
 class igQtHistogramChartWidget;
 
@@ -84,6 +87,7 @@ public:
         Selection,
         VariableDensity,
         DataChange,
+        ExtractTimeSteps,
         MedianFilter,
         ResampleToImage,
         HistogramParameters,
@@ -154,6 +158,10 @@ public:
 
     int m_outlineCount{0};
 
+    QDockWidget* SmoothDockWidget{nullptr};
+    igQtSmoothWidget* SmoothWidget{nullptr};
+    int m_smoothCount{0};
+
 private slots:
     void updateRecentFilePaths();
     void updateColorBarShow();
@@ -204,6 +212,9 @@ private:
     // 左侧工具 Tab（按需添加；下方 Properties 常驻）
     QDockWidget* m_leftFieldDock = nullptr;
     QTabWidget* m_leftFieldTabs = nullptr;
+    // 保留指定时间步：左侧工具面板（对齐 ParaView 的 Extract Time Steps，只裁剪时间轴）
+    QDockWidget* m_extractTimeStepsShell = nullptr;
+    igQtExtractTimeStepsWidget* m_extractTimeStepsWidget = nullptr;
     // 按单元类型提取：左侧面板 + 壳 Dock + 常驻 filter
     // 首次提取生成独立新模型 ExtractCellsByType_n（不覆盖输入模型）；
     // 改勾选重提取时，原地更新该新模型（模型树不新增节点）
@@ -233,9 +244,11 @@ private:
     int m_axisAlignedReflectionCount{0};
     QDockWidget* m_resampleToImageDock = nullptr;
     igQtResampleToImageWidget* m_resampleToImageWidget = nullptr;
+    // 通用几何变换：面板 + 可拖拽变换盒子的控制器（面板关闭时销毁）
+    igQtTransformBoxController* m_transformController = nullptr;
     // 每类左侧工具面板占一个槽位，初始均未打开。
     std::array<int, static_cast<size_t>(LeftToolPanelId::Count)> m_leftToolTabByPanel{
-        {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}};
+        {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}};
 
     void relocateContentToLeftTab(QDockWidget* shell, QWidget* inner, const QString& title, LeftToolPanelId id,
                                   bool centerFlowField);

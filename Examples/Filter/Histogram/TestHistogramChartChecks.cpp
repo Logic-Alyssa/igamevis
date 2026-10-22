@@ -310,6 +310,8 @@ int main(int argc, char** argv) {
     {
         // Exercise real menu/tab ownership without showing the main window or creating GL resources.
         // A parameter dialog deletes itself on close; its content must first leave the tool tab.
+        // Upstream 9eaf8f90 switched close() to deleteLater() to avoid deleting an active callback.
+        // Settle deferred deletion before checking ownership or counting reopened dialog shells.
         igQtMainWindow mainWindow;
         auto scene = SceneManager::Instance()->NewScene();
         HistogramRenderProbe::AttachCpuScene(mainWindow.rendererWidget, scene);
@@ -329,6 +331,7 @@ int main(int argc, char** argv) {
               "histogram menu docks bin parameters in the existing left tool stack");
         if (!parameters) return 1;
         parameters->apply();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         auto* sharedChart = mainWindow.findChild<igQtHistogramChartWidget*>();
         auto* rightDock = mainWindow.findChild<QDockWidget*>("dockWidget_Histogram");
         check(!parameters && sharedChart && tabs->currentWidget()->isAncestorOf(sharedChart->settingsWidget()) &&
@@ -344,10 +347,12 @@ int main(int argc, char** argv) {
         auto* close = tabs->currentWidget()->findChild<QPushButton*>("closeButton");
         if (!close) return 1;
         close->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         check(!parameters && tabs->count() == 1, "parameter close button removes its tab and deletes the dialog");
         action->trigger();
         QMetaObject::invokeMethod(tabs, "tabCloseRequested", Qt::DirectConnection, Q_ARG(int, tabs->currentIndex()));
         action->trigger();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         check(tabs->count() == 2 &&
                       mainWindow.findChildren<igQtFilterDialogDockWidget*>("HistogramParametersDock").size() == 1,
               "reopening after tab close replaces the hidden parameter shell without duplicate tabs");
