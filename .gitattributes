@@ -88,3 +88,9 @@ Examples/Models/AppendDatasets_C_hill_right.vtk -filter -diff -merge text
 Examples/Models/SurfaceVectors_A_sphere.vtk -filter -diff -merge text
 Examples/Models/SurfaceVectors_B_hill.vtk -filter -diff -merge text
 Examples/Models/SurfaceVectors_C_cylinder.vtk -filter -diff -merge text
+
+# Plain-text fixtures included by PR #124 (which also includes PR #95).
+Examples/Models/DeflectNormals_SphereSurface.vtk -filter -diff -merge text
+Examples/Models/DeflectNormals_WaveSurface.vtk -filter -diff -merge text
+Examples/Models/RandomAttributes_StructuredGrid.vtk -filter -diff -merge text
+Examples/Models/RandomAttributes_TetraMesh.vtk -filter -diff -merge text
