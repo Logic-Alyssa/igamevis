@@ -29,8 +29,8 @@ public:
     //   Parallel           - v' = v - (v·n)·n  去除法向分量，保留切向 (默认)
     //   Perpendicular      - v' = (v·n)·n      仅保留法向分量
     //   PerpendicularScale - 输出标量 = v·n (法向投影长度)
-    // 【输出命名与 ParaView 一致】结果写回输入向量数组的同名数组（替换原值），
-    // 即输出模型中 Velocity 的值就是投影结果，不再新增独立输出数组。
+    // 在独立输出模型中替换同名数组，输入模型及属性不变。
+    // 输出模型中 Velocity 的值就是投影结果，不新增其他名称的数组。
     enum ConstraintMode { Parallel = 0, Perpendicular = 1, PerpendicularScale = 2 };
     void SetConstraintMode(ConstraintMode m) { m_ConstraintMode = m; }
     ConstraintMode GetConstraintMode() const { return m_ConstraintMode; }

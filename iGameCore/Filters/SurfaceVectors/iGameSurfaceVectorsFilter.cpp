@@ -170,6 +170,30 @@ bool SurfaceVectorsFilter::Execute() {
         return false;
     }
 
+    // A new model-tree node must own its output attributes. Projecting directly
+    // into the input (including TransferToSurfaceMesh's shared attributes)
+    // changed the source model and made repeated runs project previous results.
+    auto sourceSurface = surfaceMesh;
+    surfaceMesh = SurfaceMesh::New();
+    auto copiedPoints = Points::New();
+    copiedPoints->DeepCopy(sourceSurface->GetPoints());
+    auto copiedFaces = CellArray::New();
+    copiedFaces->DeepCopy(sourceSurface->GetFaces());
+    auto copiedAttributes = AttributeSet::New();
+    if (!copiedAttributes->DeepCopy(sourceSurface->GetAttributeSet())) {
+        m_Message = "SurfaceVectorsFilter: failed to copy input surface.";
+        return false;
+    }
+    surfaceMesh->SetPoints(copiedPoints);
+    surfaceMesh->SetFaces(copiedFaces);
+    surfaceMesh->SetAttributeSet(copiedAttributes);
+    if (sourceSurface->GetEdges()) {
+        auto edges = CellArray::New();
+        edges->DeepCopy(sourceSurface->GetEdges());
+        surfaceMesh->SetEdges(edges);
+    }
+    surfaceMesh->SetName(input->GetName() + "_surface_vectors");
+
     auto attrSet = surfaceMesh->GetAttributeSet();
     if (!attrSet || attrSet->GetNumberOfAttributes() == 0) {
         m_Message = "SurfaceVectorsFilter: input has no attributes.";
@@ -209,7 +233,7 @@ bool SurfaceVectorsFilter::Execute() {
     outArray->SetDimension(3);
     outArray->Reserve(numElements);
 
-    std::vector<float> vecBuf(3, 0.0f);
+    std::vector<float> vecBuf(vecArray->GetDimension(), 0.0f);
 
     if (attachmentType == IG_CELL) {
         // ========== 单元向量：每个面用自己的法向量 ==========
@@ -355,7 +379,17 @@ bool SurfaceVectorsFilter::Execute() {
     if (dataType == IG_SURFACE_MESH) {
         SetOutput(surfaceMesh);
     } else {
-        SetOutput(input);
+        auto source = DynamicCast<UnstructuredMesh>(input);
+        auto output = UnstructuredMesh::New();
+        auto cells = CellArray::New();
+        cells->DeepCopy(source->GetCells());
+        auto types = UnsignedIntArray::New();
+        types->DeepCopy(source->GetCellTypes());
+        output->SetPoints(surfaceMesh->GetPoints());
+        output->SetCells(cells, types);
+        output->SetAttributeSet(attrSet);
+        output->SetName(surfaceMesh->GetName());
+        SetOutput(output);
     }
     return true;
 }

@@ -50,7 +50,8 @@ if (WIN32)
             "-DIGAME_ABQ_RUNTIME_LIBRARY_NAMES=${_IGAME_EXAMPLE_ABQ_RUNTIME_NAMES}"
             "-DIGAME_HDF5_RUNTIME_FILE=${_IGAME_EXAMPLE_HDF5_RUNTIME}"
             "-DIGAME_GPS_RUNTIME_DIR=${CMAKE_SOURCE_DIR}/CMakeGPS/CMakeGPS/ReferenceDLL"
-            -P "${CMAKE_SOURCE_DIR}/Cmake/DeployExampleRuntime.cmake"
+            #-P "${CMAKE_SOURCE_DIR}/Cmake/DeployExampleRuntime.cmake"
+            -P "${CMAKE_SOURCE_DIR}/../Cmake/DeployExampleRuntime.cmake"
         COMMENT "Deploying runtime DLLs for Examples"
         VERBATIM)
 else ()
@@ -164,6 +165,11 @@ add_custom_target(iGameCopyExampleAssets ${_IGAME_EXAMPLE_ASSET_COPY_COMMANDS})
 set(IGAME_EXAMPLE_TARGETS "")
 
 function(igame_add_example EXAMPLE_TARGET SOURCE)
+    # main currently lists a few examples in both the standard and batch
+    # sections. Keep one target/test registration so the region UI tests build.
+    if (TARGET ${EXAMPLE_TARGET} OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE}")
+        return()
+    endif()
     add_executable(${EXAMPLE_TARGET} ${SOURCE})
     add_dependencies(${EXAMPLE_TARGET}
         iGameCopyExampleAssets
@@ -254,6 +260,11 @@ function(igame_register_example_test EXAMPLE_TARGET)
         return()
     endif ()
 
+    if ("${EXAMPLE_TARGET}" STREQUAL "testExtractCellsByRegion")
+        add_test(NAME ${EXAMPLE_TARGET}
+            COMMAND "$<TARGET_FILE:${EXAMPLE_TARGET}>"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        set_tests_properties(${EXAMPLE_TARGET} PROPERTIES TIMEOUT 30 LABELS "region-extraction")
     # Transform runs numeric checks in CTest; the default invocation keeps the viewer.
     if ("${EXAMPLE_TARGET}" STREQUAL "testTransform")
         add_test(NAME ${EXAMPLE_TARGET} COMMAND "$<TARGET_FILE:${EXAMPLE_TARGET}>" --check
@@ -391,6 +402,9 @@ function(igame_register_example_test EXAMPLE_TARGET)
         elseif ("${EXAMPLE_TARGET}" STREQUAL "testLosslessEncode")
             list(APPEND _TEST_COMMAND -TimeoutSeconds 120
                 -Arguments "Models/Quad_Plane_Tensor.vtk")
+        elseif ("${EXAMPLE_TARGET}" STREQUAL "testRandomAttributes" OR
+                "${EXAMPLE_TARGET}" STREQUAL "testDeflectNormals")
+            list(APPEND _TEST_COMMAND -Arguments "--no-render")
         endif ()
         if ("${EXAMPLE_TARGET}" STREQUAL "testAnimationExportRangeValidation")
             # Shaders/fonts are deployed in the Examples build directory.
@@ -445,6 +459,10 @@ function(igame_register_example_test EXAMPLE_TARGET)
 
     if ("${EXAMPLE_TARGET}" STREQUAL "testLosslessEncode")
         set(_TEST_COMMAND bash "${_TEST_SCRIPT}" "$<TARGET_FILE:${EXAMPLE_TARGET}>" 120 -- Models/Quad_Plane_Tensor.vtk)
+    endif ()
+    if ("${EXAMPLE_TARGET}" STREQUAL "testRandomAttributes" OR
+        "${EXAMPLE_TARGET}" STREQUAL "testDeflectNormals")
+        set(_TEST_COMMAND bash "${_TEST_SCRIPT}" "$<TARGET_FILE:${EXAMPLE_TARGET}>" -- --no-render)
     endif ()
 
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -510,6 +528,8 @@ igame_add_example(testGetClosestPointsInLine Filter/Selection/TestGetClosestPoin
 igame_add_example(testGetClosestCellsInLine Filter/Selection/TestGetClosestCellsInLine.cpp)
 igame_add_example(testGetPointsInFrustum Filter/Selection/TestGetPointsInFrustum.cpp)
 igame_add_example(testGetCellsInFrustum Filter/Selection/TestGetCellsInFrustum.cpp)
+igame_add_example(testExtractCellsByRegion Filter/Selection/TestExtractCellsByRegion.cpp)
+igame_add_example(testRegionInteractorDispatch Filter/Selection/TestRegionInteractorDispatch.cpp)
 # Data processing
 igame_add_example(testDecimatePolyline
     Filter/DataProcessing/DecimatePolyline/TestDecimatePolyline.cpp)
@@ -574,6 +594,7 @@ igame_add_example(testAnsysRTHReader IO/AnsysRTHReader.cpp)
 igame_add_example(testLsDynaReader IO/LsDynaReader.cpp)
 
 # Animation / Filters
+igame_add_example(testVolumeOfRevolution VolumeOfRevolution/TestVolumeOfRevolution.cpp)
 igame_add_example(testAnimation Animation/TestAnimation.cpp)
 igame_add_example(testPassArray Filter/PassArrays/TestPassArrays.cpp)
 if (TARGET Qt_module AND TARGET iGameVis)
@@ -637,6 +658,7 @@ igame_add_example(testMedianFilter Filter/Median/TestMedianFilter.cpp)
 igame_add_example(testGhostCellModel Filter/GhostCell/TestGhostCellModel.cpp)
 igame_add_example(testPlaneSamplingFilter Filter/TestPlaneSampling.cpp)
 igame_add_example(testExtractEnclosedPoints Filter/TestExtractEnclosedPoints.cpp)
+igame_add_example(testPointPlaneInterpolator Filter/TestPointPlaneInterpolator.cpp)
 
 igame_add_example(TestTubeFilter Filter/Tube/TestTubeFilter.cpp)
 igame_add_example(TestSubdivideFilter Filter/Subdivide/TestSubdivideFilter.cpp)
@@ -791,6 +813,9 @@ igame_add_example(testYieldCriteria Filter/Tensor/TestYieldCriteria.cpp)
 
 # Batch 2 filter aligned with ParaView (Surface Vectors).
 igame_add_example(testSurfaceVectors Filter/TestSurfaceVectors.cpp)
+# Random Attributes / Deflect Normals
+igame_add_example(testRandomAttributes Filter/TestRandomAttributes.cpp)
+igame_add_example(testDeflectNormals Filter/TestDeflectNormals.cpp)
 
 # Batch 2 filter aligned with ParaView (Compute Quartiles).
 igame_add_example(testComputeQuartiles Filter/TestComputeQuartiles.cpp)
@@ -813,6 +838,23 @@ add_test(NAME testDrawObjectResourcesValidation COMMAND testDrawObjectResourcesV
 set_tests_properties(testDrawObjectResourcesValidation PROPERTIES TIMEOUT 30)
 if (TARGET Qt_module)
 find_package(Qt5 REQUIRED COMPONENTS Core Gui)
+add_executable(testExtractCellsByRegionDialog Filter/Selection/TestExtractCellsByRegionDialog.cpp)
+target_link_libraries(testExtractCellsByRegionDialog PRIVATE Qt_module Qt5::Widgets)
+set_target_properties(testExtractCellsByRegionDialog PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release")
+add_test(NAME testExtractCellsByRegionDialog COMMAND testExtractCellsByRegionDialog)
+set_tests_properties(testExtractCellsByRegionDialog PROPERTIES TIMEOUT 30 LABELS "region-extraction;ui"
+    ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=${CMAKE_BINARY_DIR}/Release/platforms")
+add_executable(testExtractCellsByRegionUi Filter/Selection/TestExtractCellsByRegionUi.cpp)
+target_link_libraries(testExtractCellsByRegionUi PRIVATE Qt_module Qt5::Widgets)
+target_include_directories(testExtractCellsByRegionUi PRIVATE "${CMAKE_SOURCE_DIR}/Qt")
+set_target_properties(testExtractCellsByRegionUi PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release")
+add_dependencies(testExtractCellsByRegionUi iGameCopyExampleAssets)
+add_test(NAME testExtractCellsByRegionUi COMMAND testExtractCellsByRegionUi
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(testExtractCellsByRegionUi PROPERTIES TIMEOUT 60 LABELS "region-extraction;ui"
+    ENVIRONMENT "QT_QPA_PLATFORM_PLUGIN_PATH=${CMAKE_BINARY_DIR}/Release/platforms")
 add_executable(testPreparedCpuGpuValidation IO/PreparedCpuGpuValidation.cpp)
 target_link_libraries(testPreparedCpuGpuValidation PRIVATE Qt5::Gui)
 igame_link_standard_example(testPreparedCpuGpuValidation)

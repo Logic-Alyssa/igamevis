@@ -78,6 +78,7 @@
 #include "GlobalIds/iGameGenerateGlobalIdsFilter.h"
 #include "MergeVectorComponents/iGameMergeVectorComponentsFilter.h"
 #include "PointAndCellIds/iGamePointAndCellIdsFilter.h"
+#include "PointPlaneInterpolator/iGamePointPlaneInterpolatorFilter.h"
 #include "ProcessGet/iGameGenerateProcessIdsFilter.h"
 #include "ResampleToLine/iGameResampleToLine.h"
 #include "Modeling/iGameRibbonFilter.h"

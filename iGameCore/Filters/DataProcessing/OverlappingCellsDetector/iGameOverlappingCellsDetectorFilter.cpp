@@ -2,6 +2,7 @@
 
 #include <iGameStructuredMesh.h>
 #include <iGameVolume.h>
+#include <iGameSurfaceMesh.h>
 
 #include <algorithm>
 #include <array>
@@ -73,6 +74,20 @@ DataObject::Pointer CloneInputMesh(const DataObject::Pointer& input) {
         output->SetName(source->GetName());
         return output;
     }
+    if (input->GetDataObjectType() == IG_SURFACE_MESH) {
+        auto source = DynamicCast<SurfaceMesh>(input);
+        auto output = SurfaceMesh::New();
+        output->SetPoints(copyPoints(source));
+        auto faces = CellArray::New();
+        faces->DeepCopy(source->GetFaces());
+        output->SetFaces(faces);
+        output->SetAttributeSet(copyAttributes(source));
+        if (source->GetEdges()) {
+            auto edges = CellArray::New(); edges->DeepCopy(source->GetEdges()); output->SetEdges(edges);
+        }
+        output->SetName(source->GetName());
+        return output;
+    }
     if (input->GetDataObjectType() == IG_VOLUME_MESH) {
         auto source = DynamicCast<VolumeMesh>(input);
         auto output = VolumeMesh::New();
@@ -108,9 +123,20 @@ bool OverlappingCellsDetectorFilter::Execute() {
 
     m_UnstructuredMesh = DynamicCast<UnstructuredMesh>(GetInput(0));
     m_VolumeMesh = DynamicCast<VolumeMesh>(GetInput(0));
+    if (GetInput(0) && GetInput(0)->GetDataObjectType() == IG_SURFACE_MESH) {
+        auto surface = DynamicCast<SurfaceMesh>(GetInput(0));
+        m_UnstructuredMesh = UnstructuredMesh::New();
+        auto types = UnsignedIntArray::New();
+        for (IGsize i = 0; i < surface->GetNumberOfFaces(); ++i) {
+            const auto size = surface->GetFaces()->GetCellSize(i);
+            types->AddValue(size == 3 ? IG_TRIANGLE : size == 4 ? IG_QUAD : IG_POLYGON);
+        }
+        m_UnstructuredMesh->SetPoints(surface->GetPoints());
+        m_UnstructuredMesh->SetCells(surface->GetFaces(), types);
+    }
     if (m_UnstructuredMesh.IsNull() && m_VolumeMesh.IsNull()) {
-        return fail("当前 iGame 实现支持 UnstructuredMesh 或 VolumeMesh 中的线性体单元；"
-                    "PointSet、SurfaceMesh、二维 StructuredMesh、复合数据及其他类型暂不支持。");
+        return fail("支持 SurfaceMesh 的三角形、平面凸四边形及 UnstructuredMesh / VolumeMesh 的线性单元。"
+                    "点集、二维结构网格及复合数据暂不支持。");
     }
     if (!m_VolumeMesh.IsNull() && m_VolumeMesh->GetIsPolyhedronType()) {
         return fail("当前 iGame 实现暂不支持 Polyhedron 体单元，请先转换为线性四面体、六面体、三棱柱或金字塔单元。");
@@ -123,16 +149,20 @@ bool OverlappingCellsDetectorFilter::Execute() {
     m_CellBounds.reserve(cellCount);
 
     BoundingBox meshBound;
+    bool hasSurfaceCells = false, hasVolumeCells = false;
     for (IGsize cellId = 0; cellId < cellCount; ++cellId) {
         const IGenum cellType = !m_UnstructuredMesh.IsNull()
                 ? m_UnstructuredMesh->GetCellType(cellId)
                 : VolumeMesh::GetVolumeTypeWithPointNum(m_VolumeMesh->GetVolumes()->GetCellSize(cellId));
-        if (cellType != IG_TETRA && cellType != IG_HEXAHEDRON && cellType != IG_PRISM && cellType != IG_PYRAMID) {
+        if (cellType != IG_TRIANGLE && cellType != IG_QUAD && cellType != IG_TETRA && cellType != IG_HEXAHEDRON && cellType != IG_PRISM && cellType != IG_PYRAMID) {
             return fail(std::string("不支持单元 ") + std::to_string(cellId) + " 的类型：" +
                         GetCellTypeAsString(cellType) +
-                        "。当前支持 Tetra、Hexahedron、Prism、Pyramid；二维、高阶及 Polyhedron 单元尚未实现。");
+                        "。支持 Triangle、平面凸 Quad、Tetra、Hexahedron、Prism、Pyramid；其他类型尚未实现。");
         }
         const igIndex* pointIds = nullptr;
+        hasSurfaceCells |= cellType == IG_TRIANGLE || cellType == IG_QUAD;
+        hasVolumeCells |= cellType != IG_TRIANGLE && cellType != IG_QUAD;
+        if (hasSurfaceCells && hasVolumeCells) return fail("暂不支持二维面单元和三维体单元混合检测，请分别提取后检测。");
         const int pointCount = !m_UnstructuredMesh.IsNull()
                 ? m_UnstructuredMesh->GetCellPointIds(cellId, pointIds)
                 : m_VolumeMesh->GetVolumes()->GetCellIds(cellId, pointIds);
@@ -142,6 +172,9 @@ bool OverlappingCellsDetectorFilter::Execute() {
 
         BoundingBox cellBound;
         for (int pointIndex = 0; pointIndex < pointCount; ++pointIndex) {
+            const auto points = !m_UnstructuredMesh.IsNull() ? m_UnstructuredMesh->GetPoints() : m_VolumeMesh->GetPoints();
+            if (pointIds[pointIndex] < 0 || pointIds[pointIndex] >= points->GetNumberOfPoints())
+                return fail("单元包含越界的顶点编号。");
             cellBound.add(!m_UnstructuredMesh.IsNull() ? m_UnstructuredMesh->GetPoint(pointIds[pointIndex])
                                                        : m_VolumeMesh->GetPoint(pointIds[pointIndex]));
         }
@@ -179,7 +212,16 @@ bool OverlappingCellsDetectorFilter::Execute() {
                 for (std::size_t second = first + 1; second < bucketCells.size(); ++second) {
                     const igIndex firstCellId = std::min(bucketCells[first], bucketCells[second]);
                     const igIndex secondCellId = std::max(bucketCells[first], bucketCells[second]);
-                    if (m_CellBounds[firstCellId].collide(m_CellBounds[secondCellId])) {
+                    const auto& a = m_CellBounds[firstCellId];
+                    const auto& b = m_CellBounds[secondCellId];
+                    // Surface AABBs can have zero thickness. The strict volume
+                    // predicate would reject every XY/YZ/ZX planar face pair.
+                    const bool boundsOverlap = hasSurfaceCells
+                        ? (a.min[0] <= b.max[0] && b.min[0] <= a.max[0] &&
+                           a.min[1] <= b.max[1] && b.min[1] <= a.max[1] &&
+                           a.min[2] <= b.max[2] && b.min[2] <= a.max[2])
+                        : a.collide(b);
+                    if (boundsOverlap) {
                         uniqueCandidates.emplace(firstCellId, secondCellId);
                     }
                 }
@@ -198,6 +240,95 @@ bool OverlappingCellsDetectorFilter::Execute() {
             std::numeric_limits<double>::epsilon() * maxAbsCoordinate);
     // VTK 的 Tolerance 会使单元适度收缩；在本 Filter 的 SAT 判定中用最小共同投影长度表达同一语义。
     const double strictOverlapTolerance = std::max(numericalTolerance, m_Tolerance);
+
+    struct SurfaceCell {
+        std::vector<Vector3d> points;
+        Vector3d normal;
+    };
+    std::vector<SurfaceCell> surfaceCells(hasSurfaceCells ? cellCount : 0);
+    // Validate every face, including isolated ones. Use local coordinates to
+    // avoid cancellation on translated geometry; reject warped/concave quads.
+    for (IGsize id = 0; id < surfaceCells.size(); ++id) {
+        auto& cell = surfaceCells[id];
+        const igIndex* ids = nullptr;
+        const int count = m_UnstructuredMesh->GetCellPointIds(id, ids);
+        const int expected = m_UnstructuredMesh->GetCellType(id) == IG_TRIANGLE ? 3 : 4;
+        if (count != expected) return fail("面单元的顶点数量与类型不一致。");
+        for (int i = 0; i < count; ++i) {
+            const auto& point = m_UnstructuredMesh->GetPoint(ids[i]);
+            cell.points.emplace_back(point[0], point[1], point[2]);
+        }
+        cell.normal = (cell.points[1] - cell.points[0]).cross(cell.points[2] - cell.points[0]);
+        const double length = cell.normal.length();
+        const double scale = m_CellBounds[id].diagVector().length();
+        if (!std::isfinite(length) || length <= numericalTolerance * scale)
+            return fail("检测到退化或无效的面单元。");
+        cell.normal /= length;
+        for (int i = 0; i < count; ++i) {
+            if (std::abs((cell.points[i] - cell.points[0]).dot(cell.normal)) > numericalTolerance)
+                return fail("目前只支持平面凸四边形，不支持扭曲四边形。");
+            const auto edge = cell.points[(i + 1) % count] - cell.points[i];
+            const auto next = cell.points[(i + 2) % count] - cell.points[(i + 1) % count];
+            if (edge.cross(next).dot(cell.normal) <= numericalTolerance * scale)
+                return fail("目前只支持非退化三角形及平面凸四边形，不支持凹或自交四边形。");
+        }
+    }
+    auto surfaceOverlap = [&](igIndex firstId, igIndex secondId) {
+        const auto& first = surfaceCells[firstId];
+        const auto& second = surfaceCells[secondId];
+        const auto origin = first.points[0];
+        auto direction = first.normal.cross(second.normal);
+        const double directionLength = direction.length();
+        if (directionLength <= 1e-12) {
+            for (const auto& p : second.points)
+                if (std::abs((p - origin).dot(first.normal)) > numericalTolerance) return false;
+            // Planar convex SAT: strict interval overlap on every edge normal
+            // excludes shared edges/vertices, even with distinct point IDs.
+            for (const auto* polygon : {&first, &second}) {
+                for (size_t i = 0; i < polygon->points.size(); ++i) {
+                    auto axis = (polygon->points[(i + 1) % polygon->points.size()] - polygon->points[i]).cross(first.normal);
+                    axis /= axis.length();
+                    double aMin = std::numeric_limits<double>::max(), aMax = -aMin;
+                    double bMin = aMin, bMax = aMax;
+                    for (const auto& p : first.points) { const double v = (p-origin).dot(axis); aMin=std::min(aMin,v); aMax=std::max(aMax,v); }
+                    for (const auto& p : second.points) { const double v = (p-origin).dot(axis); bMin=std::min(bMin,v); bMax=std::max(bMax,v); }
+                    if (std::min(aMax,bMax) - std::max(aMin,bMin) <= strictOverlapTolerance) return false;
+                }
+            }
+            return true;
+        }
+        // Non-coplanar faces: the common line must cross both interiors.
+        // Merely touching a boundary (including a shared edge) is excluded.
+        direction /= directionLength;
+        auto slice = [&](const SurfaceCell& polygon, const SurfaceCell& plane, std::vector<Vector3d>& hits) {
+            for (size_t i=0; i<polygon.points.size(); ++i) {
+                const auto& a=polygon.points[i]; const auto& b=polygon.points[(i+1)%polygon.points.size()];
+                const double da=(a-plane.points[0]).dot(plane.normal), db=(b-plane.points[0]).dot(plane.normal);
+                if (std::abs(da)<=numericalTolerance) hits.push_back(a);
+                if ((da < -numericalTolerance && db > numericalTolerance) || (db < -numericalTolerance && da > numericalTolerance))
+                    hits.push_back(a+(b-a)*(da/(da-db)));
+            }
+        };
+        std::vector<Vector3d> aHits,bHits;
+        slice(first,second,aHits); slice(second,first,bHits);
+        if(aHits.size()<2 || bHits.size()<2) return false;
+        auto interval = [&](const std::vector<Vector3d>& hits) {
+            double lo=std::numeric_limits<double>::max(), hi=-lo;
+            for(const auto& p:hits) {double t=(p-origin).dot(direction);lo=std::min(lo,t);hi=std::max(hi,t);}
+            return std::make_pair(lo,hi);
+        };
+        const auto a=interval(aHits), b=interval(bHits);
+        const double lo=std::max(a.first,b.first), hi=std::min(a.second,b.second);
+        if(hi-lo<=strictOverlapTolerance) return false;
+        const auto midpoint=aHits[0]+direction*((lo+hi)/2-(aHits[0]-origin).dot(direction));
+        for(const auto* polygon:{&first,&second}) {
+            for(size_t i=0;i<polygon->points.size();++i) {
+                const auto edge=polygon->points[(i+1)%polygon->points.size()]-polygon->points[i];
+                if(edge.cross(midpoint-polygon->points[i]).dot(polygon->normal)<=strictOverlapTolerance*edge.length()) return false;
+            }
+        }
+        return true;
+    };
 
     auto getVolume = [&](igIndex cellId, Cell::Pointer& owner) -> Volume* {
         if (m_UnstructuredMesh.IsNull()) return m_VolumeMesh->GetVolume(cellId);
@@ -427,6 +558,14 @@ bool OverlappingCellsDetectorFilter::Execute() {
     };
 
     for (const auto& candidate : m_CandidateCellPairs) {
+        if (hasSurfaceCells) {
+            if (surfaceOverlap(candidate.first, candidate.second)) {
+                m_OverlappingCellPairs.push_back(candidate);
+                ++m_NumberOfOverlapsPerCell[candidate.first];
+                ++m_NumberOfOverlapsPerCell[candidate.second];
+            }
+            continue;
+        }
         if (sharesSeparatingFace(candidate.first, candidate.second)) continue;
         if (!prepareTetrahedra(candidate.first) || !prepareTetrahedra(candidate.second)) return false;
         bool overlapFound = false;

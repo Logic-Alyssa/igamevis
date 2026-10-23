@@ -74,6 +74,11 @@ iGame::DataObject::Pointer CloneMesh(iGame::DataObject::Pointer input) {
                 faces->DeepCopy(src->GetFaces());
                 dst->SetFaces(faces);
             }
+            if (src->GetEdges()) {
+                auto edges = CellArray::New();
+                edges->DeepCopy(src->GetEdges());
+                dst->SetEdges(edges);
+            }
             dst->SetAttributeSet(copyAttrs(src));
             dst->SetName(src->GetName());
             return dst;
@@ -231,6 +236,18 @@ bool YieldCriteriaFilter::Execute() {
     if (srcPointSet == nullptr) {
         m_StatusMessage = "当前对象不支持屈服准则计算（需要网格 / 点集）。";
         return false;
+    }
+    if (m_Criteria.empty()) {
+        auto output = CloneMesh(input);
+        if (!output) {
+            m_StatusMessage = "当前数据类型不支持复制。";
+            return false;
+        }
+        output->SetName(input->GetName() + "_YieldCriteria");
+        output->SetTimeFrames(input->PeekTimeFrames());
+        SetOutput(output);
+        m_StatusMessage = "未选择屈服准则，已输出原模型的数据副本。";
+        return true;
     }
     auto srcAttrSet = input->GetAttributeSet();
     if (srcAttrSet == nullptr) {
@@ -447,7 +464,7 @@ std::string YieldCriteriaFilter::GetTensorArrayName() const {
 }
 
 void YieldCriteriaFilter::SetCriteria(const std::vector<Criterion>& criteria) {
-    m_Criteria = criteria.empty() ? std::vector<Criterion>{PRINCIPAL_STRESS} : criteria;
+    m_Criteria = criteria;
 }
 
 const std::vector<YieldCriteriaFilter::Criterion>& YieldCriteriaFilter::GetCriteria() const {
@@ -457,8 +474,8 @@ const std::vector<YieldCriteriaFilter::Criterion>& YieldCriteriaFilter::GetCrite
 void YieldCriteriaFilter::SetCriterion(Criterion criterion) { SetCriteria({criterion}); }
 
 const YieldCriteriaFilter::Criterion& YieldCriteriaFilter::GetCriterion() const {
-    // m_Criteria 在构造函数与 SetCriteria 中都保证非空
-    return m_Criteria.front();
+    static const Criterion defaultCriterion = PRINCIPAL_STRESS;
+    return m_Criteria.empty() ? defaultCriterion : m_Criteria.front();
 }
 
 const std::string& YieldCriteriaFilter::GetStatusMessage() const { return m_StatusMessage; }

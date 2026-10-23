@@ -33,6 +33,9 @@ Examples/Models/cell_metric_hex.vtk -filter -diff -merge text
 Examples/Models/cell_metric_tet.vtk -filter -diff -merge text
 
 # Keep upstream's small plain-text example fixtures outside Git LFS.
+Examples/Models/ConnectedSurfacePropertiesOpenPatch.vtk -filter -diff -merge text
+Examples/Models/ConnectedSurfacePropertiesPolyhedra.vtk -filter -diff -merge text
+Examples/Models/ConnectedSurfacePropertiesTwoBoxes.vtk -filter -diff -merge text
 Examples/Models/ElevationSlopeTerrain.vtk -filter -diff -merge text
 Examples/Models/ElevationTerraces.vtk -filter -diff -merge text
 Examples/Models/ExtractEnclosedPoints_Points_Cloud1.vtk -filter -diff -merge text
@@ -70,6 +73,9 @@ Examples/Models/RenameResample_test.vtk -filter -diff -merge text
 Examples/Models/AppendArcLength_test.vtk -filter -diff -merge text
 Examples/Models/Histogram_test.vtk -filter -diff -merge text
 
+# Region extraction fixtures are small plain-text models.
+Examples/Models/ExtractCellsByRegion_BoxCases.vtk -filter -diff -merge text
+Examples/Models/ExtractCellsByRegion_SphereCases.vtk -filter -diff -merge text
 # Small text fixtures for the ParaView-aligned batch-2 filter (Append Datasets).
 Examples/Models/AppendDatasets_A_curved_patch_left.vtk -filter -diff -merge text
 Examples/Models/AppendDatasets_A_curved_patch_right.vtk -filter -diff -merge text
@@ -88,3 +94,8 @@ Examples/Models/Quartiles_plane.vtk -filter -diff -merge text
 Examples/Models/ComputeQuartiles_A_sphere.vtk -filter -diff -merge text
 Examples/Models/ComputeQuartiles_B_hill.vtk -filter -diff -merge text
 Examples/Models/ComputeQuartiles_C_hex_volume.vtk -filter -diff -merge text
+# Plain-text fixtures included by PR #124 (which also includes PR #95).
+Examples/Models/DeflectNormals_SphereSurface.vtk -filter -diff -merge text
+Examples/Models/DeflectNormals_WaveSurface.vtk -filter -diff -merge text
+Examples/Models/RandomAttributes_StructuredGrid.vtk -filter -diff -merge text
+Examples/Models/RandomAttributes_TetraMesh.vtk -filter -diff -merge text
